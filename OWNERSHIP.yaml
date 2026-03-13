@@ -1,0 +1,7 @@
+bounded_context: "open_finance"
+service_id: "svc-of-payee-verification"
+application_id: "app.of.payee-verification"
+data_owner_pattern: "db_of_payee_verification_prod"
+event_namespace: "evt.of.payee"
+owning_squad: "Payee and Metadata Squad"
+wave: "1"
