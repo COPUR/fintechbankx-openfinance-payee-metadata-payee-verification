@@ -1,4 +1,4 @@
-package com.enterprise.openfinance.confirmationofpayee;
+package com.enterprise.openfinance.payeeverification;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

@@ -1,10 +1,29 @@
-# Confirmation of Payee Verification Service
+# Payee Verification Service
 
-**Repository Scope:** This is the reference microservice used in Phase 2 to validate the template setup.
+## Scope
+Confirmation of Payee runtime service for Open Finance name verification.
 
-- Language: Java 23
-- Build: Gradle
-- Architecture: Hexagonal (Ports & Adapters)
+## Phase-2 Implementation (Wave 1)
+- Hexagonal slice implemented:
+  - `domain`: match logic and status model
+  - `application`: `VerifyPayeeUseCase` and service orchestration
+  - `infrastructure`: seeded adapter + REST controller
+- Mandatory protected-operation headers enforced:
+  - `Authorization`
+  - `DPoP`
+  - `X-FAPI-Interaction-ID`
+- Observability baseline:
+  - request trace correlation (`X-Trace-Id`)
+  - custom HTTP request timer metric
+  - structured completion log line
 
-This repo will be externalized into its own Git repository during extraction.
+## API
+- Endpoint: `POST /open-finance/v1/confirmation-of-payee/confirmation`
+- Contract: `/api/openapi/confirmation-of-payee-service.yaml`
 
+## Build and Test
+```bash
+gradle clean test jacocoTestReport jacocoTestCoverageVerification
+```
+
+Coverage gate is enforced at `>= 85%` line coverage.
