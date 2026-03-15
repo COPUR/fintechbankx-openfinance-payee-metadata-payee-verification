@@ -1,4 +1,4 @@
-package com.enterprise.openfinance.confirmationofpayee;
+package com.enterprise.openfinance.payeeverification;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
