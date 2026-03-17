@@ -21,9 +21,9 @@ Confirmation of Payee runtime service for Open Finance name verification.
 - Endpoint: `POST /open-finance/v1/confirmation-of-payee/confirmation`
 - Contract: `/api/openapi/confirmation-of-payee-service.yaml`
 
-## Build and Test
-```bash
-gradle clean test jacocoTestReport jacocoTestCoverageVerification
-```
 
-Coverage gate is enforced at `>= 85%` line coverage.
+
+## Publication Guardrails
+
+- Follow [Publication Guardrails](docs/publication/PUBLICATION_GUARDRAILS.md).
+- Do not commit local paths, personal identifiers, or secrets.
