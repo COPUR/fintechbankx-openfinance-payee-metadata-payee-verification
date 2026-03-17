@@ -8,3 +8,9 @@
 
 This repo will be externalized into its own Git repository during extraction.
 
+
+
+## Publication Guardrails
+
+- Follow [Publication Guardrails](docs/publication/PUBLICATION_GUARDRAILS.md).
+- Do not commit local paths, personal identifiers, or secrets.
