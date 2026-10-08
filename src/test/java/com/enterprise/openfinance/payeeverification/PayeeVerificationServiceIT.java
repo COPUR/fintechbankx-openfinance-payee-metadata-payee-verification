@@ -73,9 +73,10 @@ class PayeeVerificationServiceIT {
     private static final String SCHEMA = "sc_of_payee_verification";
     private static final String PATH = "/open-finance/v1/confirmation-of-payee/confirmation";
     private static final String URL = "http://localhost" + PATH;
-    private static final String TAREQ_IBAN = "AE280330000000123456789";
+    // Seed rows (db/seed) live under scheme SAMPLE with SAMPLE- identifications.
+    private static final String TAREQ_ID = "SAMPLE-AE280330000000123456789";
     private static final String CLOSE_MATCH_BODY = """
-        {"Data": {"Identification": "AE28 0330 0000 0012 3456 789", "SchemeName": "IBAN", "Name": "Al Tariq Trading LLC"}}
+        {"Data": {"Identification": "sample-AE28 0330 0000 0012 3456 789", "SchemeName": "Sample", "Name": "Al Tariq Trading LLC"}}
         """;
 
     @BeforeAll
@@ -134,7 +135,7 @@ class PayeeVerificationServiceIT {
         assertThat(decision)
             .containsEntry("tpp_id", "tpp-alpha")
             .containsEntry("interaction_id", "it-ix-1")
-            .containsEntry("account_reference_hash", AccountReference.of("IBAN", TAREQ_IBAN).hash())
+            .containsEntry("account_reference_hash", AccountReference.of("SAMPLE", TAREQ_ID).hash())
             .containsEntry("match_outcome", "CLOSE_MATCH")
             .containsEntry("reason_code", "CLOSE_NAME_MATCH")
             .containsEntry("match_score", 95);
@@ -147,7 +148,7 @@ class PayeeVerificationServiceIT {
         assertThat(envelope.at("/data/outcome").asText()).isEqualTo("CLOSE_MATCH");
 
         String everythingStored = decision.values().stream().map(String::valueOf).collect(Collectors.joining("|")) + payload;
-        assertThat(everythingStored).doesNotContain("Tareq", "Tariq", TAREQ_IBAN);
+        assertThat(everythingStored).doesNotContain("Tareq", "Tariq", TAREQ_ID, "AE280330000000123456789");
     }
 
     @Test
@@ -162,7 +163,7 @@ class PayeeVerificationServiceIT {
         assertThat(count("outbox_event")).isEqualTo(1);
 
         call("""
-            {"Data": {"Identification": "AE770330000000987654321", "SchemeName": "IBAN", "Name": "Atlas Services LLC"}}
+            {"Data": {"Identification": "SAMPLE-AE770330000000987654321", "SchemeName": "SAMPLE", "Name": "Atlas Services LLC"}}
             """, "it-ix-2", dpop.proof("POST", URL, "tpp-token", Instant.now()))
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"));
@@ -181,7 +182,7 @@ class PayeeVerificationServiceIT {
 
     @Test
     void concurrentRequestsWithOneKeyRecordOneDecision() throws Exception {
-        VerifyPayeeCommand command = new VerifyPayeeCommand(AccountReference.of("IBAN", TAREQ_IBAN),
+        VerifyPayeeCommand command = new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID),
             "Al Tareq Trading LLC", "tpp-alpha", "it-ix-race");
         ExecutorService pool = Executors.newFixedThreadPool(8);
         try {
@@ -205,7 +206,7 @@ class PayeeVerificationServiceIT {
     void decisionIsRolledBackWhenTheOutboxWriteFails() {
         doThrow(new IllegalStateException("outbox unavailable")).when(outbox).saveAllAndFlush(anyList());
         try {
-            assertThatThrownBy(() -> useCase.verify(new VerifyPayeeCommand(AccountReference.of("IBAN", TAREQ_IBAN),
+            assertThatThrownBy(() -> useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID),
                 "Al Tareq Trading LLC", "tpp-alpha", "it-ix-atomic"))).isInstanceOf(IllegalStateException.class);
         } finally {
             Mockito.reset(outbox);
@@ -216,7 +217,7 @@ class PayeeVerificationServiceIT {
 
     @Test
     void decisionsAreInsertOnly() {
-        useCase.verify(new VerifyPayeeCommand(AccountReference.of("IBAN", TAREQ_IBAN), "Al Tareq Trading LLC",
+        useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC",
             "tpp-alpha", "it-ix-update"));
 
         assertThatThrownBy(() -> jdbc.update("update " + SCHEMA + ".payee_verification set match_outcome = 'NO_MATCH'"))
@@ -226,7 +227,7 @@ class PayeeVerificationServiceIT {
     @Test
     @SuppressWarnings("unchecked")
     void relayPublishesTheEventKeyedByVerificationId() {
-        VerificationResult result = useCase.verify(new VerifyPayeeCommand(AccountReference.of("IBAN", TAREQ_IBAN),
+        VerificationResult result = useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID),
             "Al Tareq Trading LLC", "tpp-alpha", "it-ix-relay"));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(),

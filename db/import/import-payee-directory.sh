@@ -23,7 +23,9 @@
 #   overwrite newer data;
 # - accounts missing from the file are left as they are (close them with
 #   account_status CLOSED in the export);
-# - the whole file is one transaction: one bad row rejects the load.
+# - the whole file is one transaction: one bad row rejects the load, and so
+#   does a row in the SAMPLE scheme or with a SAMPLE- identification (reserved
+#   for the dev/CI seed, which the import therefore never touches).
 # Holder names are personal data: this script never prints them.
 set -euo pipefail
 
@@ -76,6 +78,12 @@ BEGIN
        OR updated_at IS NULL;
     IF bad > 0 THEN
         RAISE EXCEPTION 'import rejected: % invalid row(s)', bad;
+    END IF;
+    -- Scheme SAMPLE and SAMPLE- identifications belong to the dev/CI seed (db/seed).
+    SELECT count(*) INTO bad FROM payee_directory_normalised
+    WHERE scheme_name LIKE 'SAMPLE%' OR identification LIKE 'SAMPLE-%';
+    IF bad > 0 THEN
+        RAISE EXCEPTION 'import rejected: % row(s) use the reserved SAMPLE scheme or SAMPLE- prefix of the dev/CI seed', bad;
     END IF;
 END
 \$\$;
