@@ -29,6 +29,15 @@ jobs:
   helm:
     name: deploy/helm
     runs-on: ubuntu-latest
+    env:
+      # Placeholder values for every setting the chart requires (no real endpoints).
+      CI_VALUES: >-
+        --set externalSecret.remoteSecretName=ci/payee-verification-service/db-app
+        --set config.DB_URL=jdbc:postgresql://ci:5432/db_of_payee_verification_ci
+        --set config.OIDC_ISSUER_URI=https://identity.ci.example/realms/fintechbankx
+        --set config.OIDC_JWK_SET_URI=https://identity.ci.example/realms/fintechbankx/protocol/openid-connect/certs
+        --set config.DPOP_PUBLIC_BASE_URL=https://api.ci.example
+        --set config.KAFKA_BOOTSTRAP_SERVERS=b-1.ci.example:9098
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -37,14 +46,27 @@ jobs:
       - name: Lint and render chart
         run: |
           chart=deploy/helm/payee-verification-service
-          args="--set image.repository=ci/payee-verification-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/payee-verification-service/db-app"
+          args="--set image.repository=ci/payee-verification-service --set image.tag=${{ github.sha }} $CI_VALUES"
           helm lint "$chart" $args
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           helm template ci "$chart" $args --set kafka.profile=kafka-strimzi > /dev/null
+      - name: Chart refuses empty identity-provider settings
+        run: |
+          chart=deploy/helm/payee-verification-service
+          for key in OIDC_ISSUER_URI OIDC_JWK_SET_URI DPOP_PUBLIC_BASE_URL DB_URL; do
+            if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES --set "config.$key=" > /dev/null 2>&1; then
+              echo "config.$key must be required: an empty env var defeats the application.yml default"
+              exit 1
+            fi
+          done
+          if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES | grep -Eq '^  [A-Z_]+: ""$'; then
+            echo "The ConfigMap must not render empty keys"
+            exit 1
+          fi
       - name: Chart carries no mesh overrides
         run: |
-          rendered="$(helm template ci deploy/helm/payee-verification-service --set image.repository=ci/x --set image.tag=x --set externalSecret.remoteSecretName=x)"
+          rendered="$(helm template ci deploy/helm/payee-verification-service --set image.repository=ci/x --set image.tag=x $CI_VALUES)"
           if echo "$rendered" | grep -Eq 'kind: (PeerAuthentication|DestinationRule)|excludeInboundPorts'; then
             echo "The chart must not weaken the mesh (platform contract)."
             exit 1

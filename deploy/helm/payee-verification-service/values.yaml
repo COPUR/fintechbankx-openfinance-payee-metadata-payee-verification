@@ -50,14 +50,16 @@ kafka:
   # Secret with user.crt, user.key and ca.crt when profile is kafka-strimzi.
   strimziTlsSecret: kafka-client-tls
 
-# Non-secret runtime settings, rendered into a ConfigMap.
+# Non-secret runtime settings, rendered into a ConfigMap. Empty values are not rendered,
+# and rendering fails while DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE or
+# DPOP_PUBLIC_BASE_URL is empty (and KAFKA_BOOTSTRAP_SERVERS while the relay is on).
 config:
-  DB_URL: ""                      # deploy/terraform output jdbc_url
+  DB_URL: ""                      # required: deploy/terraform output jdbc_url
   DB_USERNAME: payee_verification_app
   DB_POOL_MAX: "10"
   KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
-  OIDC_ISSUER_URI: ""             # https://<identity-host>/realms/fintechbankx
-  OIDC_JWK_SET_URI: ""            # <issuer>/protocol/openid-connect/certs
+  OIDC_ISSUER_URI: ""             # required: https://<identity-host>/realms/fintechbankx
+  OIDC_JWK_SET_URI: ""            # required: <issuer>/protocol/openid-connect/certs
   OIDC_AUDIENCE: svc-of-payee-verification
   DPOP_PUBLIC_BASE_URL: ""        # public Open Finance gateway origin TPPs sign in DPoP htu, e.g. https://<api-gateway-host>; required
   COP_CLOSE_MATCH_THRESHOLD: "85"
