@@ -79,6 +79,9 @@ TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> TEST_D
   ./gradlew check                    # also runs the PostgreSQL integration tests
 ```
 
+Without `TEST_DB_URL` the integration tests are skipped on a developer machine
+and fail in CI (`CI=true` or `JENKINS_URL` set).
+
 Run locally against PostgreSQL with the sample directory:
 
 ```bash

@@ -56,6 +56,10 @@ tasks.withType(JavaCompile).configureEach {
 
 test {
     useJUnitPlatform()
+    // Integration tests read TEST_DB_URL / TEST_DB_USERNAME / TEST_DB_PASSWORD. Without a
+    // database they are skipped locally but fail in CI (CI=true or JENKINS_URL set).
+    inputs.property('testDbConfigured', System.getenv('TEST_DB_URL') != null)
+    inputs.property('ciRun', System.getenv('CI') != null || System.getenv('JENKINS_URL') != null)
 }
 
 springBoot {

@@ -35,8 +35,29 @@ pipeline {
         }
         stage('Quality Gate') {
             steps {
+                // The PostgreSQL integration tests fail (not skip) on Jenkins without TEST_DB_URL.
+                // Use the agent's TEST_DB_* settings if present, otherwise a throwaway postgres:16 container.
                 sh '''
                   set -euo pipefail
+                  if [ -z "${TEST_DB_URL:-}" ]; then
+                    if ! command -v docker >/dev/null 2>&1; then
+                      echo "Quality Gate needs PostgreSQL 16: set TEST_DB_URL, TEST_DB_USERNAME and TEST_DB_PASSWORD on the agent, or install docker." >&2
+                      exit 1
+                    fi
+                    db_name="qg-$(echo "${BUILD_TAG:-local}" | tr -c 'a-zA-Z0-9_.-' '-')"
+                    db_password="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \\n')"
+                    docker run -d --rm --name "$db_name" -e POSTGRES_USER=qg -e POSTGRES_PASSWORD="$db_password" \\
+                      -e POSTGRES_DB=db_of_payee_verification_test -p 127.0.0.1::5432 postgres:16-alpine >/dev/null
+                    trap 'docker rm -f "$db_name" >/dev/null 2>&1 || true' EXIT
+                    for _ in $(seq 1 30); do
+                      docker exec "$db_name" pg_isready -U qg -d db_of_payee_verification_test >/dev/null 2>&1 && break
+                      sleep 2
+                    done
+                    docker exec "$db_name" pg_isready -U qg -d db_of_payee_verification_test >/dev/null || { echo "PostgreSQL container did not become ready" >&2; exit 1; }
+                    db_port="$(docker port "$db_name" 5432/tcp | head -n 1 | sed 's/.*://')"
+                    export TEST_DB_URL="jdbc:postgresql://127.0.0.1:${db_port}/db_of_payee_verification_test"
+                    export TEST_DB_USERNAME=qg TEST_DB_PASSWORD="$db_password"
+                  fi
                   ./gradlew -p "${SERVICE_DIR}" --no-daemon clean check
                 '''
             }
