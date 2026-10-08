@@ -30,7 +30,11 @@ it should not depend on a synchronous call to core banking per request.
    idempotent upsert that inserts new accounts, updates rows only when the
    export row is at least as recent and different, and rejects the whole file
    on one invalid row. Closures are delivered as `account_status = CLOSED`;
-   rows are never deleted by the import.
+   rows are never deleted by the import. When core banking signs off a
+   complete export, `--full --as-of <instant>` also closes every ACTIVE
+   account missing from it (unless changed after `<instant>`), guarded by
+   `--max-close-percent` (default 10). `updated_at` must carry an explicit
+   offset; a value without one rejects the file.
 3. The sample rows used by local, dev and CI runs live in a separate Flyway
    location (`db/seed`) that is applied only when
    `PAYEE_DIRECTORY_SEED_ENABLED=true`. Staging and production never enable it.

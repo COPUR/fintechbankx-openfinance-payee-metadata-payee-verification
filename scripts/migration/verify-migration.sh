@@ -83,7 +83,7 @@ seed() { as_flyway -f "$root"/src/main/resources/db/seed/R__seed_sample_payee_di
 echo "== import example export, twice (idempotent)"
 import_as "$root"/db/import/payee-directory.example.csv
 import_as "$root"/db/import/payee-directory.example.csv | tee "$work/second.txt"
-grep -Eq '^ +4 \| +0 \| +0 \| +4$' "$work/second.txt" || { echo "FAIL second import was not a no-op" >&2; exit 1; }
+grep -Eq '^ +4 \| +0 \| +0 \| +4 \| +0$' "$work/second.txt" || { echo "FAIL second import was not a no-op" >&2; exit 1; }
 expect "entries after import" "4" "select count(*) from $schema.payee_directory_entry"
 expect "normalised identification" "1" \
   "select count(*) from $schema.payee_directory_entry where scheme_name = 'IBAN' and identification = 'AE770330000000987654321'"
@@ -137,6 +137,43 @@ grep -q "invalid row" "$work/bad.err" && echo "ok   invalid file rejected"
 expect "no partial load" "t" \
   "select holder_name = 'Example Holder, Jr.' from $schema.payee_directory_entry where identification = 'AE070331234567890123456'"
 
+echo "== timestamps need an explicit offset"
+cat > "$work/no-offset.csv" <<'CSV'
+scheme_name,identification,holder_name,account_type,account_status,updated_at
+IBAN,AE280330000000123456789,Al Tareq Trading LLC,BUSINESS,CLOSED,2026-10-05T08:00:00
+CSV
+if import_as "$work/no-offset.csv" 2>"$work/no-offset.err"; then
+  echo "FAIL an updated_at without offset was accepted" >&2; exit 1
+fi
+grep -q "explicit offset" "$work/no-offset.err" && echo "ok   updated_at without offset rejected"
+expect "rejected file changed nothing" "ACTIVE" \
+  "select account_status from $schema.payee_directory_entry where identification = 'AE280330000000123456789'"
+printf 'scheme_name,identification,holder_name,account_type,account_status,updated_at\nIBAN,AE280330000000123456789,Al Tareq Trading LLC,BUSINESS,ACTIVE,2026-09-30T14:00:00+04:00\n' > "$work/offset.csv"
+import_as "$work/offset.csv" >/dev/null
+expect "+04:00 offset read as the same UTC instant (no change)" "2026-09-30 10:00:00+00" \
+  "select updated_at at time zone 'UTC' || '+00' from $schema.payee_directory_entry where identification = 'AE280330000000123456789'"
+
+echo "== full import (complete export as of an instant)"
+if import_as --full "$root"/db/import/payee-directory.example.csv 2>/dev/null; then
+  echo "FAIL --full without --as-of was accepted" >&2; exit 1
+fi
+echo "ok   --full requires --as-of"
+grep -v '^IBAN,AE070331234567890123456,' "$root"/db/import/payee-directory.example.csv > "$work/full.csv"
+import_as --full --as-of 2026-09-01T00:00:00Z --max-close-percent 100 "$work/full.csv" >/dev/null
+expect "an account changed after the export instant is not closed" "ACTIVE" \
+  "select account_status from $schema.payee_directory_entry where identification = 'AE070331234567890123456'"
+before_full="$(value "$imported")"
+if import_as --full --as-of 2026-10-01T00:00:00Z "$work/full.csv" 2>"$work/full.err"; then
+  echo "FAIL full import closed 1 of 2 active accounts past the 10 % guard" >&2; exit 1
+fi
+grep -q "would close 1 of 2 active accounts" "$work/full.err" && echo "ok   guard rejected the full import"
+expect "guarded full import changed nothing" "$before_full" "$imported"
+import_as --full --as-of 2026-10-01T00:00:00Z --max-close-percent 50 "$work/full.csv" | tee "$work/full.txt"
+grep -Eq '\| +1$' "$work/full.txt" || { echo "FAIL full import did not report one closed account" >&2; exit 1; }
+expect "missing account closed as of the export" "CLOSED|2026-10-01 00:00:00" \
+  "select account_status || '|' || (updated_at at time zone 'UTC') from $schema.payee_directory_entry where identification = 'AE070331234567890123456'"
+expect "full mode never touches SAMPLE rows" "$after_seed" "$sample"
+
 echo "== decisions are insert-only (as the runtime role)"
 as_role payee_verification_app -c "insert into payee_verification values ('7f0c3c1e-4b8e-4d2a-9a51-0c1d2e3f4a5b', 'tpp-rehearsal', 'ix-1', repeat('a', 64), 'ACTIVE', 'MATCH', 'EXACT_NAME_MATCH', 100, now())"
 if as_role payee_verification_app -c "update payee_verification set match_outcome = 'NO_MATCH'" 2>/dev/null; then
@@ -183,7 +220,7 @@ expect "runtime and import roles own nothing" "0" \
   "select count(*) from pg_class where relowner in ('payee_verification_app'::regrole, 'payee_verification_import'::regrole)"
 
 echo "== audit trail"
-expect "imports recorded with role and application" "4:1" \
+expect "imports recorded with role and application" "4:2" \
   "select count(*) filter (where operation = 'INSERT') || ':' || count(*) filter (where operation = 'UPDATE') from $schema.payee_directory_entry_history where changed_by = 'payee_verification_import' and application_name = 'payee-verification-import'"
 expect "the update keeps old and new status" "ACTIVE>CLOSED" \
   "select old_account_status || '>' || new_account_status from $schema.payee_directory_entry_history where operation = 'UPDATE' and identification = 'AE770330000000987654321'"

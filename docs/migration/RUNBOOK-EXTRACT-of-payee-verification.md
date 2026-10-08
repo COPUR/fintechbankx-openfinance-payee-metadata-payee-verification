@@ -30,6 +30,11 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
 - The directory is loaded from core banking with
   `db/import/import-payee-directory.sh <export.csv>` (upsert, re-runnable;
   see ADR-0001). Run it before cutover and on the agreed schedule after it.
+  With a complete, signed-off export use `--full --as-of <export instant>`:
+  ACTIVE accounts missing from the file are closed as of that instant (rows
+  changed later are left alone), and the run is rolled back if it would close
+  more than 10 % of the active accounts (`--max-close-percent`).
+  Every `updated_at` must carry an offset (`Z` or `+hh:mm`).
 - The sample seed (`db/seed`) is for local/dev/CI only
   (`PAYEE_DIRECTORY_SEED_ENABLED=true`).
 - Rehearsal: `scripts/migration/verify-migration.sh` (migrations, seed twice,
