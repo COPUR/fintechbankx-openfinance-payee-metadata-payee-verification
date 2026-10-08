@@ -120,6 +120,32 @@ class OutboxRelayTest {
         assertThat(failures("KafkaException")).isEqualTo(1.0);
     }
 
+    /**
+     * A topic missing from the cluster (UnknownTopicOrPartition) or a send timeout is not
+     * the event's fault: the batch stops with no row marked and the back-off starts.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"UnknownTopicOrPartitionException", "TimeoutException"})
+    void aMissingTopicOrATimeoutStopsTheBatchMarksNoRowAndStartsTheBackOff(String error) {
+        OutboxEventJpaEntity first = row("VER-1");
+        OutboxEventJpaEntity second = row("VER-2");
+        batch(first, second);
+        RuntimeException cause = error.equals("TimeoutException")
+            ? new TimeoutException("Expiring 1 record(s)")
+            : new org.apache.kafka.common.errors.UnknownTopicOrPartitionException("evt.of.payee.verification-completed.v1");
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(failed(cause));
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(OutboxRelay.isPayloadError(cause)).isFalse();
+        assertUntouched(first);
+        assertUntouched(second);
+        verify(kafka, times(1)).send(any(ProducerRecord.class));
+        assertThat(relay.backoff()).isEqualTo(OutboxRelay.INITIAL_BACKOFF);
+        assertThat(failures(error)).isEqualTo(1.0);
+        assertThat(meters.find("outbox.parked.events").counters()).isEmpty();
+    }
+
     /** ADR-021 decision 4 has no time ceiling: a retryable error never parks a row, however long it lasts. */
     @Test
     void aRetryableErrorThatPersistsPastTwentyFourHoursStillDoesNotPark() {
