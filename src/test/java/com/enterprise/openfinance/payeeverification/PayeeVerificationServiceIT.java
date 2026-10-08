@@ -345,6 +345,34 @@ class PayeeVerificationServiceIT {
             + ".outbox_event", String.class)).isEqualTo("INC-1234 topic ACL missing, replay after fix|true");
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void everyParkIsCountedOnceRelayParksAtOnceAndOperatorParksOnTheNextRun() {
+        useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC", "tpp-alpha", "it-ix-count-1"));
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
+            new KafkaProducerException(null, "send failed", new RecordTooLargeException("The message is 2000000 bytes"))));
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(),
+            100, Duration.ofSeconds(5), Duration.ofDays(7), meters);
+
+        relay.relayOnce();
+        assertThat(jdbc.queryForObject("select park_counted from " + SCHEMA + ".outbox_event where parked_by = 'relay'",
+            Boolean.class)).as("counted when the relay parked it").isTrue();
+        assertThat(meters.get("outbox.parked.events").tag("exception", "RecordTooLargeException").counter().count()).isEqualTo(1.0);
+
+        useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC", "tpp-alpha", "it-ix-count-2"));
+        String eventId = jdbc.queryForObject("select event_id::text from " + SCHEMA + ".outbox_event where parked_at is null",
+            String.class);
+        jdbc.queryForObject("select " + SCHEMA + ".park_outbox_event(?::uuid, ?)", Object.class, eventId, "INC-9 dropped");
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count())
+            .as("the operator park is counted once, not on every run").isEqualTo(1.0);
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where not park_counted", Long.class))
+            .isZero();
+    }
+
     /** Port-level predicate: the directory matches on scheme AND identification, exactly, after normalisation. */
     @Test
     void directoryPortMatchesOnSchemeAndIdentificationTogether() {

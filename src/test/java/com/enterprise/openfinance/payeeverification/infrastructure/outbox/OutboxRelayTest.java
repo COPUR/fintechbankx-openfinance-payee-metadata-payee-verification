@@ -162,6 +162,49 @@ class OutboxRelayTest {
     }
 
     @Test
+    void aPayloadErrorIsCountedAsAParkedEventTaggedWithItsClass() {
+        OutboxEventJpaEntity poison = row("VER-1");
+        batch(poison);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(failed(new RecordTooLargeException("2000000 bytes")));
+
+        relay.relayOnce();
+
+        assertThat(meters.get("outbox.parked.events").tag("exception", "RecordTooLargeException").counter().count())
+            .isEqualTo(1.0);
+        assertThat(poison.isParkCounted()).as("the relay's own park is counted when it parks").isTrue();
+        assertThat(meters.find("outbox.parked.events").tag("exception", "OperatorPark").counter()).isNull();
+    }
+
+    @Test
+    void anOperatorParkIsCountedOnceByTheRelay() {
+        OutboxEventJpaEntity operatorParked = row("VER-OP");
+        // What park_outbox_event() leaves behind: parked with a reason and the login, park_counted false.
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedAt", NOW);
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedReason", "INC-1 dropped");
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedBy", "ops");
+        batch();
+        when(outbox.findUncountedParks()).thenReturn(List.of(operatorParked)).thenReturn(List.of());
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(operatorParked.isParkCounted()).isTrue();
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count())
+            .as("counted once, not on every run").isEqualTo(1.0);
+        verify(kafka, never()).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void parksAreNotCountedByAReplicaWithoutTheRelayLock() {
+        when(outbox.tryRelayLock(anyLong())).thenReturn(false);
+
+        relay.relayOnce();
+
+        verify(outbox, never()).findUncountedParks();
+        assertThat(meters.find("outbox.parked.events").counters()).isEmpty();
+    }
+
+    @Test
     void afterAFailureTheRelayBacksOffAndASuccessResetsIt() {
         OutboxEventJpaEntity only = row("VER-1");
         batch(only);
