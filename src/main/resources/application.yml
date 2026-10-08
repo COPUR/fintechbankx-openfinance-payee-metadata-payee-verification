@@ -98,6 +98,9 @@ management:
   metrics:
     tags:
       service: svc-of-payee-verification
+      # The chart sets these from the service account and the namespace.
+      app: ${METRICS_APP_TAG:payee-verification-service}
+      squad: ${METRICS_SQUAD_TAG:open-finance}
     distribution:
       percentiles-histogram:
         http.server.requests: true

@@ -111,6 +111,12 @@ spec:
             # Migrations ran in the init container; the runtime role owns nothing.
             - name: SPRING_FLYWAY_ENABLED
               value: "false"
+            # Common Micrometer tags app = service account and squad = namespace, as the
+            # platform alerts expect (outbox_oldest_pending_age_seconds, outbox_send_failures_total).
+            - name: METRICS_APP_TAG
+              value: {{ .Values.serviceAccount.name | quote }}
+            - name: METRICS_SQUAD_TAG
+              value: {{ .Release.Namespace | quote }}
             - name: SPRING_PROFILES_ACTIVE
               value: {{ .Values.kafka.profile | quote }}
             {{- if eq .Values.kafka.profile "kafka-strimzi" }}
