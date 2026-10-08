@@ -92,12 +92,42 @@ no shadow traffic, no weighted split, no route back to the monolith.
 | Step | Action | Check before going on |
 |---|---|---|
 | 1 | Deploy the chart with `OUTBOX_RELAY_ENABLED=false`; run the first directory import (`--full --as-of`) | readiness green; directory row count equals the export |
-| 2 | Parity check below, against the service directly (port-forward) | passes |
-| 3 | Merge and apply mesh PR #11: the gateway route switches to the service in one step | parity check passes through the gateway; rollback triggers stay clear for 30 minutes |
-| 4 | Once the topic is in the catalog, set `OUTBOX_RELAY_ENABLED=true` | `outbox_pending_events` returns to ~0; `outbox_oldest_pending_age_seconds` stays below 60 |
+| 2 | Parity check below, against the service directly (port-forward), as the dedicated parity TPP client (`<parity-client-id>`) | passes; exactly one new decision for `<parity-client-id>` |
+| 3 | Merge and apply mesh PR #11: the gateway route switches to the service in one step | parity check, again as `<parity-client-id>`, passes through the gateway; rollback triggers stay clear for 30 minutes |
+| 3a | Park the parity events (below) so the relay never publishes them | `go-live parity` parked rows = N (2 when steps 2 and 3 each ran once); no unpublished, unparked row left for `<parity-client-id>` |
+| 4 | Once the topic is in the catalog, set `OUTBOX_RELAY_ENABLED=true` | `outbox_pending_events` returns to ~0; `outbox_oldest_pending_age_seconds` stays below 60; `outbox_parked_events_total{exception="OperatorPark"}` rose by exactly N on the relay's first run (it counts the step 3a parks once, so the platform alert `OutboxEventsParked` fires once: acknowledge it against this change); `outbox_parked_rows` is N plus any payload-error parks |
 | 5 | Remove the CoP route and code from the monolith after one release without rollback | no traffic on the old route |
 
 No dual writes at any step: only the service records decisions.
+
+### Parity requests are real decisions: park their events before step 4
+
+Every parity request that returns `200` records a decision and writes an
+`evt.of.payee.verification-completed.v1` row to the outbox; with the relay off
+(steps 1 to 3) it waits there, and step 4 would publish it to real consumers.
+So the parity check runs only as a dedicated parity TPP client
+(`<parity-client-id>`, a Keycloak client registered for go-live and disabled
+afterwards; never a real TPP), and its events are parked before step 4.
+
+Expected count N: one decision per parity run (the repeated
+`X-FAPI-Interaction-ID` returns the stored decision; the `400` and `401` cases
+record nothing), so N = 2 when step 2 and step 3 each ran once. Record N in the
+change ticket; every extra parity run adds one.
+
+Step 3a, as the operator (see "Parking by hand" for the credential):
+
+    sql="select o.event_id from sc_of_payee_verification.outbox_event o
+           join sc_of_payee_verification.payee_verification v on v.verification_id::text = o.aggregate_id
+          where v.tpp_id = '<parity-client-id>' and o.published_at is null and o.parked_at is null
+          order by o.created_seq"
+    psql "<conninfo>" -Atc "$sql" | while read -r event_id; do
+      db/ops/park-outbox-event.sh "<conninfo>" "$event_id" "go-live parity"
+    done
+    psql "<conninfo>" -Atc "select count(*) from sc_of_payee_verification.outbox_event where parked_reason = 'go-live parity'"   # = N
+    psql "<conninfo>" -Atc "$sql" | wc -l                                                                                      # = 0
+
+The parity decisions stay in `payee_verification` (insert-only evidence); their
+parked outbox rows are kept (parked rows are not purged).
 
 ### Parity check: response shape and headers only
 
