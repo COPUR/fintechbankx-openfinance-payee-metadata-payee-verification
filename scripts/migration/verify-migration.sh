@@ -225,6 +225,8 @@ grep -q "a reason is required" "$work/park.err" && echo "ok   operator park need
 PGUSER=payee_verification_migrate PGPASSWORD="$pw_migrate" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" "REHEARSAL-1 dropped by operator" >/dev/null
 expect "operator park records the reason and the login role" "REHEARSAL-1 dropped by operator|payee_verification_migrate" \
   "select parked_reason || '|' || parked_by from $schema.outbox_event where event_id = '$event_id'"
+expect "an operator park is left for the relay to count once" "f" \
+  "select park_counted from $schema.outbox_event where event_id = '$event_id'"
 expect "a parked row is out of the relay's batch" "0" \
   "select count(*) from $schema.outbox_event where published_at is null and parked_at is null and event_id = '$event_id'"
 psql_db -c "delete from $schema.outbox_event where event_id = '$event_id'"

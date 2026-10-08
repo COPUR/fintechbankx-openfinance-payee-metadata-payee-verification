@@ -40,12 +40,19 @@ import java.util.concurrent.TimeUnit;
  *       oldest-pending-age gauge pages the owning squad, and only an operator may park
  *       the row by hand, with a reason (runbook, {@code park_outbox_event}).</li>
  * </ul>
+ * Every parked row increments the counter {@code outbox.parked.events}
+ * (outbox_parked_events_total{exception}) once: the relay's own parks with the
+ * exception class, operator parks with exception="OperatorPark", counted on the
+ * next run by the replica holding the relay lock. The platform alert
+ * OutboxEventsParked fires on any increase.
  * Metrics carry the exception class only, never identifiers or messages.
  */
 public class OutboxRelay {
 
     static final long RELAY_LOCK_KEY = 0x6F6670766F7574L; // "ofpvout"
     static final String PARKED_BY_RELAY = "relay";
+    static final String PARKED_COUNTER = "outbox.parked.events";
+    static final String OPERATOR_PARK = "OperatorPark";
     static final Duration INITIAL_BACKOFF = Duration.ofSeconds(1);
     static final Duration MAX_BACKOFF = Duration.ofMinutes(1);
     private static final Set<Class<? extends Throwable>> PAYLOAD_ERRORS =
@@ -88,6 +95,7 @@ public class OutboxRelay {
             if (!outbox.tryRelayLock(RELAY_LOCK_KEY)) {
                 return new Outcome(0, false);
             }
+            countOperatorParks();
             List<OutboxEventJpaEntity> batch = outbox.findUnpublishedBatch(batchSize);
             int sent = 0;
             for (OutboxEventJpaEntity row : batch) {
@@ -105,6 +113,7 @@ public class OutboxRelay {
                     if (isPayloadError(cause)) {
                         log.error("Outbox event {} cannot be published ({}); parked, relay continues", row.getEventId(), errorClass);
                         row.park(clock.instant(), errorClass, PARKED_BY_RELAY);
+                        parked(errorClass).increment();
                         continue;
                     }
                     log.warn("Outbox relay stopped at event {} ({}); no row marked, retrying with back-off",
@@ -142,6 +151,22 @@ public class OutboxRelay {
             .description("Outbox sends that failed, by exception class (ADR-021 decision 4)")
             .tag("exception", errorClass)
             .register(meters);
+    }
+
+    private Counter parked(String exceptionClass) {
+        return Counter.builder(PARKED_COUNTER)
+            .description("Outbox rows parked (payload error, or OperatorPark), one increment per row")
+            .tag("exception", exceptionClass)
+            .register(meters);
+    }
+
+    /** Operator parks happen outside the app; count each one once (this replica holds the relay lock). */
+    private void countOperatorParks() {
+        for (OutboxEventJpaEntity row : outbox.findUncountedParks()) {
+            row.markParkCounted();
+            parked(OPERATOR_PARK).increment();
+            log.warn("Outbox event {} was parked by an operator", row.getEventId());
+        }
     }
 
     /**

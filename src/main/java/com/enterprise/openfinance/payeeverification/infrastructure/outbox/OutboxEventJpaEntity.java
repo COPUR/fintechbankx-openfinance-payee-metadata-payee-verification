@@ -71,6 +71,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "parked_by", length = 128)
     private String parkedBy;
 
+    /** True once this park was counted in outbox_parked_events_total (V8). */
+    @Column(name = "park_counted", nullable = false)
+    private boolean parkCounted;
+
     protected OutboxEventJpaEntity() {
     }
 
@@ -112,6 +116,7 @@ public class OutboxEventJpaEntity {
     public Instant getParkedAt() { return parkedAt; }
     public String getParkedReason() { return parkedReason; }
     public String getParkedBy() { return parkedBy; }
+    public boolean isParkCounted() { return parkCounted; }
 
     void markPublished(Instant at) {
         this.publishedAt = at;
@@ -125,6 +130,12 @@ public class OutboxEventJpaEntity {
         this.parkedReason = truncate(reason, 512);
         this.parkedBy = truncate(by, 128);
         this.lastError = this.parkedReason;
+        this.parkCounted = true;
+    }
+
+    /** An operator park (park_outbox_event) has been counted by the relay. */
+    void markParkCounted() {
+        this.parkCounted = true;
     }
 
     private static String truncate(String value, int max) {

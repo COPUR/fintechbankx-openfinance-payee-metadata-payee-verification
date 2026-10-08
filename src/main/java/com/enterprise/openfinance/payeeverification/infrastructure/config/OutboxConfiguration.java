@@ -44,10 +44,15 @@ public class OutboxConfiguration {
             .register(registry);
     }
 
-    /** Rows parked by the relay (payload error) or by an operator (Prometheus outbox_parked_events). */
+    /**
+     * Rows parked right now, by the relay (payload error) or by an operator
+     * (Prometheus outbox_parked_rows). Not named outbox.parked.events: that is the
+     * counter outbox_parked_events_total{exception} (OutboxRelay, platform alert
+     * OutboxEventsParked), and Prometheus refuses a gauge and a counter sharing a base name.
+     */
     @Bean
     Gauge outboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
-        return Gauge.builder("outbox.parked.events", outbox, SpringDataOutboxRepository::countByParkedAtIsNotNull)
+        return Gauge.builder("outbox.parked.rows", outbox, SpringDataOutboxRepository::countByParkedAtIsNotNull)
             .description("Outbox rows taken out of the relay; see parked_reason and parked_by")
             .tag("service", "svc-of-payee-verification")
             .register(registry);

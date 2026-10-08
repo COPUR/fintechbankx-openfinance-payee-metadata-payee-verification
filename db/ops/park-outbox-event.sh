@@ -9,6 +9,10 @@
 #   PGPASSWORD=... db/ops/park-outbox-event.sh "<conninfo as payee_verification_migrate>" <event-id> "<reason>"
 # The reason should name the incident or ticket and why the event is dropped.
 # Refuses a blank reason and an unknown, published or already parked event.
+# The park leaves park_counted false; the relay counts it once on its next run
+# (outbox_parked_events_total{exception="OperatorPark"}, platform alert
+# OutboxEventsParked). There is no replay path; one added later must reset
+# park_counted to false.
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then

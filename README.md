@@ -94,6 +94,16 @@ OIDC_ISSUER_URI=<issuer> OIDC_JWK_SET_URI=<jwks> ./gradlew bootRun
 `DPOP_PUBLIC_BASE_URL` is required (no default): the service refuses to start
 without it. The outbox relay is off unless `OUTBOX_RELAY_ENABLED=true`.
 
+Outbox metrics: `outbox_pending_events`, `outbox_oldest_pending_age_seconds`
+(pages the squad), `outbox_send_failures_total{exception}`, gauge
+`outbox_parked_rows` (rows parked now) and counter
+`outbox_parked_events_total{exception}`: one increment per parked row, tagged
+with the payload error class or `OperatorPark` for a park by
+`db/ops/park-outbox-event.sh` (counted once by the relay, column
+`park_counted`, V8). Parked events alert through the platform rule
+`OutboxEventsParked` (any increase over 15 minutes, warning, routed by squad
+with namespace fallback); the service ships no parked alert rule.
+
 Callers need an access token with `aud` = `svc-of-payee-verification`; TPP
 tokens must be DPoP-bound (`Authorization: DPoP <token>` plus a `DPoP` proof).
 

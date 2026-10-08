@@ -101,8 +101,12 @@ is not evidence that anything is deployed or compliant.
   fmt/validate, data-migration rehearsal).
 - Metrics: `http_server_requests_seconds_*`, `hikaricp_*`, `jvm_*`,
   `outbox_pending_events`, `outbox_oldest_pending_age_seconds`,
-  `outbox_parked_events`, `outbox_send_failures_total{exception}` (tags carry
-  no payee identifiers or account numbers); traces via
+  `outbox_parked_rows` (rows parked now), counters
+  `outbox_send_failures_total{exception}` and
+  `outbox_parked_events_total{exception}` (one increment per parked row,
+  relay or operator; the platform alert `OutboxEventsParked` fires on any
+  increase over 15 minutes and the service ships no parked alert rule; tags
+  carry no payee identifiers or account numbers); traces via
   OTLP to the platform collector; logs carry `traceId`, `spanId`, `requestId`.
 - Runbook: `docs/migration/RUNBOOK-EXTRACT-of-payee-verification.md`.
 

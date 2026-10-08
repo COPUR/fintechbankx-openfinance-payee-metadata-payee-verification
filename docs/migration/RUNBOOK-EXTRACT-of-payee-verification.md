@@ -182,7 +182,8 @@ identifiers or messages:
 | `outbox_oldest_pending_age_seconds` | age of the oldest row neither published nor parked |
 | `outbox_send_failures_total{exception=...}` | failed sends by exception class |
 | `outbox_pending_events` | rows waiting to be sent |
-| `outbox_parked_events` | rows taken out of the relay (relay or operator) |
+| `outbox_parked_rows` | gauge: rows parked right now (relay or operator; formerly the gauge `outbox_parked_events`) |
+| `outbox_parked_events_total{exception=...}` | counter, one increment per parked row: the payload error class, or `OperatorPark` for a park by `park_outbox_event` (counted once by the relay on its next run, column `park_counted`, V8) |
 
 Alerts:
 
@@ -191,7 +192,10 @@ Alerts:
   `outbox_send_failures_total` by `exception` and the relay's WARN log (event
   id and exception class), then fix the cause (topic ACL, credentials, broker,
   topic missing from the catalog). The relay resumes by itself.
-- Ticket when `outbox_parked_events` increases: a payload error the code must fix.
+- Parked rows: the platform alert **`OutboxEventsParked`** (any increase of
+  `outbox_parked_events_total` over 15 minutes, warning, routed by squad with
+  namespace fallback) covers them; this service ships no parked alert rule.
+  `exception` names a payload error the code must fix, or `OperatorPark`.
 
 Parking by hand: only an operator may park a row the relay keeps retrying,
 once the squad has decided the event will not be sent. Run, as the schema
@@ -202,6 +206,10 @@ owner (`<env>/payee-verification-service/db-migration`, break-glass):
 It calls `park_outbox_event(event_id, reason)` (`V7__outbox_parking.sql`),
 which records `parked_at`, the reason and the login role in `parked_by`, and
 refuses a blank reason or an unknown, published or already parked row.
+The relay counts the park once on its next run
+(`outbox_parked_events_total{exception="OperatorPark"}`). Rows parked before
+V8 count as already counted. Parked rows are never relayed again, so there is
+no replay path; one added later must reset `park_counted = false`.
 Parked rows are not purged. Find stuck rows with
 `select event_id, created_at from sc_of_payee_verification.outbox_event where published_at is null and parked_at is null order by created_seq limit 5;`.
 - Retention: outbox rows 7 days; decisions are kept (evidence) until the
