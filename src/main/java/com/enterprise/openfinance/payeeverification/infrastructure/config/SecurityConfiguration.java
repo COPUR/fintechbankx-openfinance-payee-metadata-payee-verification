@@ -63,7 +63,7 @@ public class SecurityConfiguration {
     DpopProofValidator dpopProofValidator(DpopReplayStore replayStore, Clock clock,
                                           @Value("${openfinance.dpop.proof-max-age:PT60S}") Duration maxAge,
                                           @Value("${openfinance.dpop.clock-skew:PT5S}") Duration clockSkew,
-                                          @Value("${openfinance.dpop.public-base-url:}") String publicBaseUrl) {
+                                          @Value("${openfinance.dpop.public-base-url:http://localhost:8080}") String publicBaseUrl) {
         return new DpopProofValidator(replayStore, clock, maxAge, clockSkew, publicBaseUrl);
     }
 

@@ -63,7 +63,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {
     "openfinance.outbox.relay.enabled=false",
     "openfinance.payee-verification.directory-seed.enabled=true",
-    "management.tracing.enabled=false"
+    "management.tracing.enabled=false",
+    // MockMvc requests are http://localhost/...
+    "openfinance.dpop.public-base-url=http://localhost"
 })
 @AutoConfigureMockMvc
 class PayeeVerificationServiceIT {

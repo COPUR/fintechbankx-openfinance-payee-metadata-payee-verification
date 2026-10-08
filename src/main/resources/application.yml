@@ -69,7 +69,9 @@ spring:
 server:
   port: 8080
   shutdown: graceful
-  forward-headers-strategy: framework
+  # Client-supplied X-Forwarded-* headers are not trusted: nothing in this service
+  # builds URLs from the request, and DPoP htu uses DPOP_PUBLIC_BASE_URL instead.
+  forward-headers-strategy: none
 
 management:
   server:
@@ -111,8 +113,9 @@ openfinance:
   dpop:
     proof-max-age: PT60S
     clock-skew: PT5S
-    # External base URL the TPP signs in htu (e.g. https://api.example.com), if it differs from the URL the pod sees.
-    public-base-url: ${DPOP_PUBLIC_BASE_URL:}
+    # External origin TPPs call (API gateway); proof htu = this base URL + request path.
+    # Host and X-Forwarded-* headers are never used for htu. Blank is refused at startup.
+    public-base-url: ${DPOP_PUBLIC_BASE_URL:http://localhost:8080}
   payee-verification:
     matching:
       close-match-threshold: ${COP_CLOSE_MATCH_THRESHOLD:85}

@@ -59,7 +59,7 @@ config:
   OIDC_ISSUER_URI: ""             # https://<identity-host>/realms/fintechbankx
   OIDC_JWK_SET_URI: ""            # <issuer>/protocol/openid-connect/certs
   OIDC_AUDIENCE: svc-of-payee-verification
-  DPOP_PUBLIC_BASE_URL: ""        # external API base URL the TPP signs in DPoP htu
+  DPOP_PUBLIC_BASE_URL: ""        # public Open Finance gateway origin TPPs sign in DPoP htu, e.g. https://<api-gateway-host>; required
   COP_CLOSE_MATCH_THRESHOLD: "85"
   COP_DIRECTORY_CACHE_TTL: PT30S
   OUTBOX_RELAY_ENABLED: "true"

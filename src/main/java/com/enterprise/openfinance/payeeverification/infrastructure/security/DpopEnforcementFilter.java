@@ -65,7 +65,7 @@ public class DpopEnforcementFilter extends OncePerRequestFilter {
             return;
         }
         try {
-            validator.validate(proof, request.getMethod(), request.getRequestURL().toString(), request.getRequestURI(),
+            validator.validate(proof, request.getMethod(), request.getRequestURI(),
                 jwt.getTokenValue(), boundJkt);
         } catch (DpopValidationException e) {
             errors.unauthorized(request, response, "INVALID_DPOP_PROOF", e.getMessage(), "invalid_dpop_proof");

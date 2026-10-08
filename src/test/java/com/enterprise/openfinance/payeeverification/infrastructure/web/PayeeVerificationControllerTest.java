@@ -51,7 +51,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Web slice with the real security chain: issuer/audience are covered in
  * SecurityConfigurationTest, here the decoder is mocked and DPoP proofs are real.
  */
-@WebMvcTest(controllers = PayeeVerificationController.class, properties = "openfinance.security.audience=svc-of-payee-verification")
+@WebMvcTest(controllers = PayeeVerificationController.class, properties = {
+    "openfinance.security.audience=svc-of-payee-verification",
+    // MockMvc requests are http://localhost/...
+    "openfinance.dpop.public-base-url=http://localhost"
+})
 @Import({SecurityConfiguration.class, PayeeVerificationControllerTest.TestBeans.class})
 class PayeeVerificationControllerTest {
 

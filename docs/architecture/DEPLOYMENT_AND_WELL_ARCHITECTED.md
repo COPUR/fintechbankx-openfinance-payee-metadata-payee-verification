@@ -33,7 +33,9 @@ is not evidence that anything is deployed or compliant.
 
 - OAuth2 resource server: issuer and `aud = svc-of-payee-verification`
   validated; TPP tokens must be DPoP-bound and carry a valid proof (RFC 9449:
-  `cnf.jkt`, `htm`/`htu`, `iat` window, `ath`, single-use `jti` stored in
+  `cnf.jkt`, `htm`/`htu` (`htu` against `DPOP_PUBLIC_BASE_URL` plus the
+  request path, never Host or `X-Forwarded-*`, which are not trusted:
+  `forward-headers-strategy: none`), `iat` window, `ath`, single-use `jti` stored in
   PostgreSQL so replicas share replay protection). Internal callers with realm
   role `service` and no `cnf` are exempt (mesh mTLS). The TPP id is taken from
   the token, never from the body.

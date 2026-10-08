@@ -15,6 +15,7 @@ topologySpread:
   maxSkew: 2
 config:
   DB_POOL_MAX: "5"
+  DPOP_PUBLIC_BASE_URL: https://api.dev.fintechbankx.example   # placeholder; set to the dev gateway origin
   # Dev may use the sample directory rows (db/seed); staging and prod never do.
   PAYEE_DIRECTORY_SEED_ENABLED: "true"
   TRACING_SAMPLING_PROBABILITY: "1.0"

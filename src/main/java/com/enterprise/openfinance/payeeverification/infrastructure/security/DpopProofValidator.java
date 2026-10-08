@@ -50,18 +50,18 @@ public class DpopProofValidator {
         this.clock = clock;
         this.maxAge = maxAge;
         this.clockSkew = clockSkew;
-        this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.strip();
+        this.publicBaseUrl = validBaseUrl(publicBaseUrl);
     }
 
     /**
      * @param proof        value of the DPoP header
      * @param method       HTTP method of the request
-     * @param requestUrl   request URL as seen by the service (scheme, host, port, path)
-     * @param requestUri   request path, used with the configured public base URL
+     * @param requestUri   request path; the expected htu is the configured public base URL plus this path.
+     *                     Host and X-Forwarded-* headers are client-controlled and never used for htu.
      * @param accessToken  raw access token
      * @param boundJkt     cnf.jkt claim of the access token
      */
-    public void validate(String proof, String method, String requestUrl, String requestUri,
+    public void validate(String proof, String method, String requestUri,
                          String accessToken, String boundJkt) {
         SignedJWT jwt = parse(proof);
         JWSHeader header = jwt.getHeader();
@@ -79,8 +79,7 @@ public class DpopProofValidator {
             throw new DpopValidationException("DPoP htm does not match the request method");
         }
         String htu = normalizeUrl(stringClaim(claims, "htu"));
-        if (!htu.equals(normalizeUrl(requestUrl))
-            && (publicBaseUrl.isEmpty() || !htu.equals(normalizeUrl(publicBaseUrl + requestUri)))) {
+        if (!htu.equals(normalizeUrl(publicBaseUrl + requestUri))) {
             throw new DpopValidationException("DPoP htu does not match the request URL");
         }
         Instant issuedAt = issuedAt(claims);
@@ -100,6 +99,27 @@ public class DpopProofValidator {
         if (!replayStore.markUsed(proofKey, issuedAt.plus(maxAge).plus(clockSkew))) {
             throw new DpopValidationException("DPoP proof was already used");
         }
+    }
+
+    /** Absolute http(s) origin, optionally with a path prefix; no query or fragment. Blank is refused. */
+    static String validBaseUrl(String value) {
+        String base = value == null ? "" : value.strip();
+        if (base.isEmpty()) {
+            throw new IllegalArgumentException("openfinance.dpop.public-base-url (DPOP_PUBLIC_BASE_URL) must be set");
+        }
+        URI uri;
+        try {
+            uri = URI.create(base);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("openfinance.dpop.public-base-url is not a valid URL", e);
+        }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+        if (!("https".equals(scheme) || "http".equals(scheme)) || uri.getHost() == null
+            || uri.getRawQuery() != null || uri.getRawFragment() != null || uri.getRawUserInfo() != null) {
+            throw new IllegalArgumentException(
+                "openfinance.dpop.public-base-url must be an absolute http(s) URL without query or fragment");
+        }
+        return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
     }
 
     static String sha256Base64Url(String value) {

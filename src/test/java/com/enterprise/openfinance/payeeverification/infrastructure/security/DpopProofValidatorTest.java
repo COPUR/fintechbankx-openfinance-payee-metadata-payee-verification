@@ -28,69 +28,89 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class DpopProofValidatorTest {
 
     private static final Instant NOW = Instant.parse("2026-10-08T09:30:00Z");
-    private static final String URL = "https://api.example.com/open-finance/v1/confirmation-of-payee/confirmation";
+    private static final String BASE_URL = "https://api.example.com";
+    private static final String PATH = "/open-finance/v1/confirmation-of-payee/confirmation";
+    private static final String URL = BASE_URL + PATH;
     private static final String TOKEN = "access-token-value";
 
     private final DpopTestSupport dpop = new DpopTestSupport();
     private final MemoryReplayStore replay = new MemoryReplayStore();
     private final DpopProofValidator validator = new DpopProofValidator(replay, Clock.fixed(NOW, ZoneOffset.UTC),
-        Duration.ofSeconds(60), Duration.ofSeconds(5), "");
+        Duration.ofSeconds(60), Duration.ofSeconds(5), BASE_URL);
 
     @Test
     void acceptsAFreshProofBoundToTheToken() {
         String proof = dpop.proof("POST", URL, TOKEN, NOW.minusSeconds(2));
 
-        assertThatCode(() -> validator.validate(proof, "POST", URL, "/open-finance/v1/confirmation-of-payee/confirmation",
-            TOKEN, dpop.thumbprint())).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(proof, "POST", PATH, TOKEN, dpop.thumbprint())).doesNotThrowAnyException();
     }
 
     @Test
     void htuComparisonIgnoresQueryDefaultPortAndHostCase() {
-        String proof = dpop.proof("POST", "https://API.example.com:443/open-finance/v1/x", TOKEN, NOW);
+        String proof = dpop.proof("POST", "https://API.example.com:443/open-finance/v1/x?a=1", TOKEN, NOW);
 
-        assertThatCode(() -> validator.validate(proof, "post", "https://api.example.com/open-finance/v1/x?a=1", "/open-finance/v1/x",
-            TOKEN, dpop.thumbprint())).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(proof, "post", "/open-finance/v1/x", TOKEN, dpop.thumbprint()))
+            .doesNotThrowAnyException();
     }
 
     @Test
-    void acceptsTheConfiguredPublicBaseUrlBehindAGateway() {
-        DpopProofValidator behindGateway = new DpopProofValidator(replay, Clock.fixed(NOW, ZoneOffset.UTC),
-            Duration.ofSeconds(60), Duration.ofSeconds(5), "https://api.example.com");
-        String proof = dpop.proof("POST", URL, TOKEN, NOW);
+    void acceptsOnlyTheConfiguredPublicBaseUrlNotThePodOrAForwardedHost() {
+        assertRejected(dpop.proof("POST",
+            "http://payee-verification-service.open-finance.svc.cluster.local:8080" + PATH, TOKEN, NOW),
+            "POST", TOKEN, dpop.thumbprint(), "htu");
+        assertRejected(dpop.proof("POST", "https://evil.example" + PATH, TOKEN, NOW), "POST", TOKEN, dpop.thumbprint(), "htu");
+        assertRejected(dpop.proof("POST", "http://api.example.com" + PATH, TOKEN, NOW), "POST", TOKEN, dpop.thumbprint(), "htu");
+        assertRejected(dpop.proof("POST", "https://api.example.com:8443" + PATH, TOKEN, NOW), "POST", TOKEN, dpop.thumbprint(), "htu");
+    }
 
-        assertThatCode(() -> behindGateway.validate(proof, "POST",
-            "http://payee-verification-service.open-finance.svc.cluster.local:8080/open-finance/v1/confirmation-of-payee/confirmation",
-            "/open-finance/v1/confirmation-of-payee/confirmation", TOKEN, dpop.thumbprint())).doesNotThrowAnyException();
+    @Test
+    void keepsAPathPrefixOfTheBaseUrl() {
+        DpopProofValidator prefixed = new DpopProofValidator(replay, Clock.fixed(NOW, ZoneOffset.UTC),
+            Duration.ofSeconds(60), Duration.ofSeconds(5), "https://api.example.com/payees/");
+        String proof = dpop.proof("POST", "https://api.example.com/payees" + PATH, TOKEN, NOW);
+
+        assertThatCode(() -> prefixed.validate(proof, "POST", PATH, TOKEN, dpop.thumbprint())).doesNotThrowAnyException();
+    }
+
+    @Test
+    void refusesABlankOrNonOriginBaseUrl() {
+        for (String bad : new String[] {null, " ", "api.example.com", "ftp://api.example.com", "https://api.example.com/?a=b",
+            "https://api.example.com/#f", "https://bad host"}) {
+            assertThatThrownBy(() -> new DpopProofValidator(replay, Clock.fixed(NOW, ZoneOffset.UTC),
+                Duration.ofSeconds(60), Duration.ofSeconds(5), bad))
+                .as(String.valueOf(bad))
+                .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Test
     void rejectsAReplayedProof() {
         String proof = dpop.proof("POST", URL, TOKEN, NOW);
-        validator.validate(proof, "POST", URL, "/p", TOKEN, dpop.thumbprint());
+        validator.validate(proof, "POST", PATH, TOKEN, dpop.thumbprint());
 
-        assertRejected(proof, "POST", URL, TOKEN, dpop.thumbprint(), "already used");
+        assertRejected(proof, "POST", TOKEN, dpop.thumbprint(), "already used");
     }
 
     @Test
     void rejectsWrongMethodUrlTokenOrKey() {
-        assertRejected(dpop.proof("GET", URL, TOKEN, NOW), "POST", URL, TOKEN, dpop.thumbprint(), "htm");
-        assertRejected(dpop.proof("POST", "https://evil.example.com/x", TOKEN, NOW), "POST", URL, TOKEN, dpop.thumbprint(), "htu");
-        assertRejected(dpop.proof("POST", URL, "another-token", NOW), "POST", URL, TOKEN, dpop.thumbprint(), "ath");
-        assertRejected(dpop.proof("POST", URL, TOKEN, NOW), "POST", URL, TOKEN, "other-thumbprint", "cnf.jkt");
-        assertRejected(dpop.proof("POST", URL, TOKEN, NOW), "POST", URL, TOKEN, null, "cnf.jkt");
+        assertRejected(dpop.proof("GET", URL, TOKEN, NOW), "POST", TOKEN, dpop.thumbprint(), "htm");
+        assertRejected(dpop.proof("POST", "https://evil.example.com/x", TOKEN, NOW), "POST", TOKEN, dpop.thumbprint(), "htu");
+        assertRejected(dpop.proof("POST", URL, "another-token", NOW), "POST", TOKEN, dpop.thumbprint(), "ath");
+        assertRejected(dpop.proof("POST", URL, TOKEN, NOW), "POST", TOKEN, "other-thumbprint", "cnf.jkt");
+        assertRejected(dpop.proof("POST", URL, TOKEN, NOW), "POST", TOKEN, null, "cnf.jkt");
     }
 
     @Test
     void rejectsProofsOutsideTheTimeWindow() {
-        assertRejected(dpop.proof("POST", URL, TOKEN, NOW.minusSeconds(61)), "POST", URL, TOKEN, dpop.thumbprint(), "iat");
-        assertRejected(dpop.proof("POST", URL, TOKEN, NOW.plusSeconds(6)), "POST", URL, TOKEN, dpop.thumbprint(), "iat");
+        assertRejected(dpop.proof("POST", URL, TOKEN, NOW.minusSeconds(61)), "POST", TOKEN, dpop.thumbprint(), "iat");
+        assertRejected(dpop.proof("POST", URL, TOKEN, NOW.plusSeconds(6)), "POST", TOKEN, dpop.thumbprint(), "iat");
     }
 
     @Test
     void rejectsWrongTypeAndMalformedProofs() {
-        assertRejected(dpop.proof("POST", URL, TOKEN, NOW, "jti-1", JOSEObjectType.JWT), "POST", URL, TOKEN, dpop.thumbprint(), "typ");
-        assertRejected("not-a-jwt", "POST", URL, TOKEN, dpop.thumbprint(), "signed JWT");
-        assertRejected(dpop.proof("POST", "relative/path", TOKEN, NOW), "POST", URL, TOKEN, dpop.thumbprint(), "absolute");
+        assertRejected(dpop.proof("POST", URL, TOKEN, NOW, "jti-1", JOSEObjectType.JWT), "POST", TOKEN, dpop.thumbprint(), "typ");
+        assertRejected("not-a-jwt", "POST", TOKEN, dpop.thumbprint(), "signed JWT");
+        assertRejected(dpop.proof("POST", "relative/path", TOKEN, NOW), "POST", TOKEN, dpop.thumbprint(), "absolute");
     }
 
     @Test
@@ -98,12 +118,12 @@ class DpopProofValidatorTest {
         SignedJWT hmac = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.HS256).type(new JOSEObjectType("dpop+jwt"))
             .jwk(dpop.key().toPublicJWK()).build(), claims(NOW, "jti-h"));
         hmac.sign(new MACSigner("0123456789abcdef0123456789abcdef"));
-        assertRejected(hmac.serialize(), "POST", URL, TOKEN, dpop.thumbprint(), "asymmetric");
+        assertRejected(hmac.serialize(), "POST", TOKEN, dpop.thumbprint(), "asymmetric");
 
         SignedJWT noKey = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.ES256).type(new JOSEObjectType("dpop+jwt")).build(),
             claims(NOW, "jti-k"));
         noKey.sign(new ECDSASigner(dpop.key()));
-        assertRejected(noKey.serialize(), "POST", URL, TOKEN, dpop.thumbprint(), "public jwk");
+        assertRejected(noKey.serialize(), "POST", TOKEN, dpop.thumbprint(), "public jwk");
     }
 
     @Test
@@ -112,14 +132,14 @@ class DpopProofValidatorTest {
         SignedJWT forged = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.ES256).type(new JOSEObjectType("dpop+jwt"))
             .jwk(dpop.key().toPublicJWK()).build(), claims(NOW, "jti-f"));
         forged.sign(new ECDSASigner(other.key()));
-        assertRejected(forged.serialize(), "POST", URL, TOKEN, dpop.thumbprint(), "signature");
+        assertRejected(forged.serialize(), "POST", TOKEN, dpop.thumbprint(), "signature");
 
         RSAKey rsa = new RSAKeyGenerator(2048).generate();
         SignedJWT rsaProof = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.PS256).type(new JOSEObjectType("dpop+jwt"))
             .jwk(rsa.toPublicJWK()).build(), claims(NOW, "jti-r"));
         rsaProof.sign(new RSASSASigner(rsa));
         String rsaJkt = rsa.toPublicJWK().computeThumbprint("SHA-256").toString();
-        assertThatCode(() -> validator.validate(rsaProof.serialize(), "POST", URL, "/p", TOKEN, rsaJkt)).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(rsaProof.serialize(), "POST", PATH, TOKEN, rsaJkt)).doesNotThrowAnyException();
     }
 
     @Test
@@ -128,13 +148,13 @@ class DpopProofValidatorTest {
             .jwk(dpop.key().toPublicJWK()).build(), new JWTClaimsSet.Builder()
             .claim("htm", "POST").claim("htu", URL).claim("ath", DpopTestSupport.ath(TOKEN)).issueTime(Date.from(NOW)).build());
         noJti.sign(new ECDSASigner(dpop.key()));
-        assertRejected(noJti.serialize(), "POST", URL, TOKEN, dpop.thumbprint(), "jti");
+        assertRejected(noJti.serialize(), "POST", TOKEN, dpop.thumbprint(), "jti");
 
         SignedJWT noIat = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.ES256).type(new JOSEObjectType("dpop+jwt"))
             .jwk(dpop.key().toPublicJWK()).build(), new JWTClaimsSet.Builder()
             .claim("htm", "POST").claim("htu", URL).claim("ath", DpopTestSupport.ath(TOKEN)).jwtID("j").build());
         noIat.sign(new ECDSASigner(dpop.key()));
-        assertRejected(noIat.serialize(), "POST", URL, TOKEN, dpop.thumbprint(), "iat");
+        assertRejected(noIat.serialize(), "POST", TOKEN, dpop.thumbprint(), "iat");
     }
 
     @Test
@@ -144,8 +164,8 @@ class DpopProofValidatorTest {
             .isEqualTo("fUHyO2r2Z3DZ53EsNrWBb0xWXoaNy59IiKCAqksmQEo");
     }
 
-    private void assertRejected(String proof, String method, String url, String token, String jkt, String reason) {
-        assertThatThrownBy(() -> validator.validate(proof, method, url, "/open-finance/v1/confirmation-of-payee/confirmation", token, jkt))
+    private void assertRejected(String proof, String method, String token, String jkt, String reason) {
+        assertThatThrownBy(() -> validator.validate(proof, method, PATH, token, jkt))
             .isInstanceOf(DpopValidationException.class)
             .hasMessageContaining(reason);
     }
