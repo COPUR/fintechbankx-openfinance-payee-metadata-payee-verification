@@ -46,7 +46,7 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
 1. `terraform apply` in `deploy/terraform` with `environments/<env>.tfvars`.
 2. With the RDS-managed admin secret (`master_user_secret_arn`), before the
    first deploy:
-   `psql "host=<writer> dbname=db_of_payee_verification_<env> user=<admin> sslmode=require" -v ON_ERROR_STOP=1 -f db/bootstrap/bootstrap-roles.sql`.
+   `psql "host=<writer> dbname=db_of_payee_verification_<env> user=<admin> sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem" -v ON_ERROR_STOP=1 -f db/bootstrap/bootstrap-roles.sql`.
    It creates four LOGIN roles without passwords and lets only the owner role
    create the schema. Set each password with `\password <role>` and store
    `{"username","password"}` in the matching secret:
@@ -64,7 +64,12 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
    `payee_verification_migrate`.
 3. Install the chart with `serviceAccount.roleArn`, `config.DB_URL`,
    `externalSecret.remoteSecretName` and `externalSecret.migrationRemoteSecretName`
-   from the Terraform outputs. The `migrate` init container applies the
+   from the Terraform outputs. `jdbc_url` uses `sslmode=verify-full` with
+   `sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem`; the chart mounts
+   the platform ConfigMap `rds-ca-bundle` there in both containers and refuses
+   any other `config.DB_URL`. Precondition: `kubectl -n open-finance get
+   configmap rds-ca-bundle` exists (platform trust-manager); without it the pod
+   stays in ContainerCreating. The `migrate` init container applies the
    migrations and exits; the service container starts with Flyway off.
 4. Import the directory as `payee_verification_import`
    (`PGUSER=payee_verification_import db/import/import-payee-directory.sh <export.csv>`).
@@ -234,7 +239,7 @@ once the squad has decided the event will not be sent. Run as the ops role
 `payee_verification_ops` (`<env>/payee-verification-service/db-ops`); the
 schema-owner credential is not needed:
 
-    PGPASSWORD=... db/ops/park-outbox-event.sh "host=<writer> dbname=db_of_payee_verification_<env> user=payee_verification_ops sslmode=verify-full sslrootcert=<rds-ca-bundle>/global-bundle.pem" <event-id> "<incident or ticket>: <why>"
+    PGPASSWORD=... db/ops/park-outbox-event.sh "host=<writer> dbname=db_of_payee_verification_<env> user=payee_verification_ops sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem" <event-id> "<incident or ticket>: <why>"
 
 It calls `park_outbox_event(event_id, reason)` (`V7__outbox_parking.sql`,
 SECURITY DEFINER since V9, so the ops role needs no table rights), which

@@ -52,6 +52,11 @@ is not evidence that anything is deployed or compliant.
   PostgreSQL, Kafka and 443.
 - Pods: non-root, read-only root filesystem, all capabilities dropped,
   RuntimeDefault seccomp.
+- Data in transit: `rds.force_ssl` on Aurora, and every JDBC URL uses
+  `sslmode=verify-full` against the platform RDS CA bundle (ConfigMap
+  `rds-ca-bundle`, mounted read-only at `/etc/fintechbankx/rds-ca` in the
+  `migrate` init container and the service container); the chart refuses to
+  render any other `config.DB_URL`.
 - Data: KMS-encrypted Aurora, snapshots, logs and Secrets Manager secrets.
   Four database roles (`db/bootstrap/bootstrap-roles.sql`): the service runs
   as `payee_verification_app` (`db-app`; SELECT on the directory, SELECT/INSERT
