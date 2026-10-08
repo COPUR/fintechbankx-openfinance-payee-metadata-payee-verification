@@ -86,9 +86,13 @@ Run locally against PostgreSQL with the sample directory:
 
 ```bash
 DB_URL=jdbc:postgresql://localhost:5432/db_of_payee_verification_local DB_USERNAME=<user> \
-SPRING_DATASOURCE_PASSWORD=<pw> PAYEE_DIRECTORY_SEED_ENABLED=true OUTBOX_RELAY_ENABLED=false \
+SPRING_DATASOURCE_PASSWORD=<pw> PAYEE_DIRECTORY_SEED_ENABLED=true \
+DPOP_PUBLIC_BASE_URL=http://localhost:8080 \
 OIDC_ISSUER_URI=<issuer> OIDC_JWK_SET_URI=<jwks> ./gradlew bootRun
 ```
+
+`DPOP_PUBLIC_BASE_URL` is required (no default): the service refuses to start
+without it. The outbox relay is off unless `OUTBOX_RELAY_ENABLED=true`.
 
 Callers need an access token with `aud` = `svc-of-payee-verification`; TPP
 tokens must be DPoP-bound (`Authorization: DPoP <token>` plus a `DPoP` proof).

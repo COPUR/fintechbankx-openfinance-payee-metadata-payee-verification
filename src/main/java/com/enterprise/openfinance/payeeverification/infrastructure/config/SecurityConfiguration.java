@@ -62,11 +62,13 @@ public class SecurityConfiguration {
         return new SecurityErrorWriter(objectMapper);
     }
 
+    /** Web runs only: a migrate-only run (web-application-type=none) needs no DPoP settings. */
     @Bean
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     DpopProofValidator dpopProofValidator(DpopReplayStore replayStore, Clock clock,
                                           @Value("${openfinance.dpop.proof-max-age:PT60S}") Duration maxAge,
                                           @Value("${openfinance.dpop.clock-skew:PT5S}") Duration clockSkew,
-                                          @Value("${openfinance.dpop.public-base-url:http://localhost:8080}") String publicBaseUrl) {
+                                          @Value("${openfinance.dpop.public-base-url:}") String publicBaseUrl) {
         return new DpopProofValidator(replayStore, clock, maxAge, clockSkew, publicBaseUrl);
     }
 

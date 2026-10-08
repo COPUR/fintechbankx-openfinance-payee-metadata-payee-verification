@@ -60,6 +60,8 @@ test {
     // database they are skipped locally but fail in CI (CI=true or JENKINS_URL set).
     inputs.property('testDbConfigured', System.getenv('TEST_DB_URL') != null)
     inputs.property('ciRun', System.getenv('CI') != null || System.getenv('JENKINS_URL') != null)
+    // DpopBaseUrlRequiredIT proves the service will not start without it.
+    environment.remove('DPOP_PUBLIC_BASE_URL')
 }
 
 springBoot {

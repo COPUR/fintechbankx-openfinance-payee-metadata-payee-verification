@@ -53,6 +53,19 @@ final class PostgresTestDatabase {
         registry.add("spring.datasource.password", () -> env("TEST_DB_PASSWORD", "payee_test"));
     }
 
+    /** The same settings as {@link #register}, as command-line style properties. */
+    static String[] properties() {
+        String url = url();
+        if (url == null) {
+            return new String[0];
+        }
+        return new String[] {
+            "--spring.datasource.url=" + url,
+            "--spring.datasource.username=" + env("TEST_DB_USERNAME", "payee_test"),
+            "--spring.datasource.password=" + env("TEST_DB_PASSWORD", "payee_test")
+        };
+    }
+
     private static String url() {
         String url = System.getenv("TEST_DB_URL");
         return url == null || url.isBlank() ? null : url;

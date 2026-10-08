@@ -120,8 +120,10 @@ openfinance:
     proof-max-age: PT60S
     clock-skew: PT5S
     # External origin TPPs call (API gateway); proof htu = this base URL + request path.
-    # Host and X-Forwarded-* headers are never used for htu. Blank is refused at startup.
-    public-base-url: ${DPOP_PUBLIC_BASE_URL:http://localhost:8080}
+    # Host and X-Forwarded-* headers are never used for htu. Required: there is no
+    # default, and an unset or blank value is refused at startup (migrate-only runs
+    # do not need it). Local runs: DPOP_PUBLIC_BASE_URL=http://localhost:8080.
+    public-base-url: ${DPOP_PUBLIC_BASE_URL:}
   payee-verification:
     matching:
       close-match-threshold: ${COP_CLOSE_MATCH_THRESHOLD:85}
