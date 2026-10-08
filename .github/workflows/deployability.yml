@@ -34,7 +34,7 @@ jobs:
       CI_VALUES: >-
         --set externalSecret.remoteSecretName=ci/payee-verification-service/db-app
         --set externalSecret.migrationRemoteSecretName=ci/payee-verification-service/db-migration
-        --set config.DB_URL=jdbc:postgresql://ci:5432/db_of_payee_verification_ci
+        --set config.DB_URL=jdbc:postgresql://ci:5432/db_of_payee_verification_ci?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
         --set config.OIDC_ISSUER_URI=https://identity.ci.example/realms/fintechbankx
         --set config.OIDC_JWK_SET_URI=https://identity.ci.example/realms/fintechbankx/protocol/openid-connect/certs
         --set config.DPOP_PUBLIC_BASE_URL=https://api.ci.example
@@ -49,7 +49,7 @@ jobs:
           chart=deploy/helm/payee-verification-service
           args="--set image.repository=ci/payee-verification-service --set image.tag=${{ github.sha }} $CI_VALUES"
           helm lint "$chart" $args
-          helm template ci "$chart" $args > /dev/null
+          helm template ci "$chart" $args > rendered.yaml
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           helm template ci "$chart" $args --set kafka.profile=kafka-strimzi > /dev/null
           # NetworkPolicy is opt-in (the mesh repository owns it): none by default ...
@@ -88,6 +88,40 @@ jobs:
             echo "The chart must not weaken the mesh (platform contract)."
             exit 1
           fi
+      - name: Chart refuses JDBC URLs that do not verify the server certificate
+        run: |
+          # deploy/terraform output jdbc_url: TLS verified against the platform RDS CA bundle.
+          chart=deploy/helm/payee-verification-service
+          for url in 'jdbc:postgresql://ci:5432/x?sslmode=require' \
+                     'jdbc:postgresql://ci:5432/x?sslmode=verify-full' \
+                     'jdbc:postgresql://ci:5432/x?sslmode=verify-ca&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem' \
+                     'jdbc:postgresql://ci:5432/x?sslmode=verify-full&sslrootcert=/tmp/global-bundle.pem'; do
+            if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES \
+                 --set "config.DB_URL=$url" > /dev/null 2> tls.err; then
+              echo "chart rendered with config.DB_URL=$url"
+              exit 1
+            fi
+            grep -q "sslmode=verify-full" tls.err
+          done
+      - name: Migrate init container and service container mount the platform RDS CA bundle
+        run: |
+          # ConfigMap rds-ca-bundle, key global-bundle.pem, published by trust-manager (platform contract).
+          helm template ci deploy/helm/payee-verification-service --set image.repository=ci/x --set image.tag=x $CI_VALUES > rendered.yaml
+          python3 - rendered.yaml <<'PY'
+          import sys
+          docs = open(sys.argv[1]).read().split("\n---")
+          pod = next(d for d in docs if "kind: Deployment" in d)
+          init, main = pod.split("      containers:\n", 1)
+          init = init.split("      initContainers:\n", 1)[1]
+          main, volumes = main.split("      volumes:\n", 1)
+          mount = "- name: rds-ca-bundle\n              mountPath: /etc/fintechbankx/rds-ca\n              readOnly: true"
+          for name, part in (("migrate init container", init), ("service container", main)):
+              assert mount in part, f"{name} does not mount rds-ca-bundle read-only at /etc/fintechbankx/rds-ca"
+          assert ("- name: rds-ca-bundle\n          configMap:\n            name: rds-ca-bundle\n"
+                  "            items:\n              - key: global-bundle.pem\n                path: global-bundle.pem") in volumes, \
+              "volume rds-ca-bundle must project key global-bundle.pem of ConfigMap rds-ca-bundle"
+          print("rds-ca-bundle mounted in both containers")
+          PY
       - name: Metrics squad tag is the namespace the chart deploys to
         run: |
           # The platform alerts route by squad = namespace; the tag must follow payee.namespace
@@ -116,6 +150,12 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false -input=false
       - run: terraform validate
+      - name: JDBC output verifies the server certificate against the mounted RDS CA bundle
+        run: |
+          if grep -n "sslmode=require" outputs.tf; then
+            echo "JDBC outputs must use sslmode=verify-full, not sslmode=require"; exit 1
+          fi
+          test "$(grep -c 'sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"' outputs.tf)" -eq 1
 
   data-migration:
     name: deploy/data-migration-rehearsal
