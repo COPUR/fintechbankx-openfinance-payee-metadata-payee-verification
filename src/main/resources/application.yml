@@ -1,0 +1,136 @@
+# svc-of-payee-verification runtime configuration.
+# Every environment-specific value comes from the environment (Helm values,
+# Kubernetes Secret synced from AWS Secrets Manager); nothing secret is here.
+spring:
+  application:
+    name: payee-verification-service
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/db_of_payee_verification_local}
+    username: ${DB_USERNAME:payee_verification_app}
+    # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret
+    # synced from AWS Secrets Manager); it is never written in this file.
+    hikari:
+      schema: sc_of_payee_verification
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 3000
+      max-lifetime: 1200000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: sc_of_payee_verification
+        jdbc:
+          time_zone: UTC
+  flyway:
+    schemas: sc_of_payee_verification
+    default-schema: sc_of_payee_verification
+    create-schemas: true
+    locations: classpath:db/migration
+    # The optional db/seed location (repeatable R__ seed) may be switched off after it
+    # was applied once; "*:missing" tolerates that (typed patterns need Flyway Teams).
+    ignore-migration-patterns: "*:future,*:missing"
+  kafka:
+    # Runtime-neutral: authentication comes from the kafka-msk or kafka-strimzi
+    # profile (SPRING_PROFILES_ACTIVE), see application-kafka-*.yml.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    client-id: svc-of-payee-verification
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the platform topic catalog.
+      auto-create: false
+    producer:
+      acks: all
+      compression-type: lz4
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms.
+        request.timeout.ms: 20000
+        delivery.timeout.ms: 30000
+        linger.ms: 5
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
+          jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  metrics:
+    tags:
+      service: svc-of-payee-verification
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  observations:
+    key-values:
+      service: svc-of-payee-verification
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://otel-collector.observability.svc.cluster.local:4318/v1/traces}
+  tracing:
+    enabled: ${TRACING_ENABLED:true}
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+
+openfinance:
+  security:
+    # Access tokens must carry this service id in aud (Keycloak audience mapper).
+    audience: ${OIDC_AUDIENCE:svc-of-payee-verification}
+  dpop:
+    proof-max-age: PT60S
+    clock-skew: PT5S
+    # External base URL the TPP signs in htu (e.g. https://api.example.com), if it differs from the URL the pod sees.
+    public-base-url: ${DPOP_PUBLIC_BASE_URL:}
+  payee-verification:
+    matching:
+      close-match-threshold: ${COP_CLOSE_MATCH_THRESHOLD:85}
+    directory-cache:
+      ttl: ${COP_DIRECTORY_CACHE_TTL:PT30S}
+      max-entries: 10000
+    directory-seed:
+      # Sample directory rows (db/seed). Never true in staging or production.
+      enabled: ${PAYEE_DIRECTORY_SEED_ENABLED:false}
+  outbox:
+    retention: P7D
+    relay:
+      enabled: ${OUTBOX_RELAY_ENABLED:true}
+      interval: PT1S
+      batch-size: 100
+      # Longer than delivery.timeout.ms so a send fails inside Kafka first.
+      send-timeout: PT35S
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{requestId:-}]"

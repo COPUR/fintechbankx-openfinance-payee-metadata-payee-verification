@@ -5,13 +5,16 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+/**
+ * FAPI headers every call must carry. DPoP is checked by
+ * {@link DpopEnforcementFilter}, which knows whether the caller is exempt.
+ */
 @Component
 public class ApiHeaderGuardInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         require(request, "Authorization");
-        require(request, "DPoP");
         require(request, "X-FAPI-Interaction-ID");
         return true;
     }
