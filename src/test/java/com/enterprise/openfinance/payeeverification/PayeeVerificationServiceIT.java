@@ -2,9 +2,12 @@ package com.enterprise.openfinance.payeeverification;
 
 import com.enterprise.openfinance.payeeverification.domain.command.VerifyPayeeCommand;
 import com.enterprise.openfinance.payeeverification.domain.model.AccountReference;
+import com.enterprise.openfinance.payeeverification.domain.model.PayeeDirectoryEntry;
 import com.enterprise.openfinance.payeeverification.domain.model.VerificationResult;
 import com.enterprise.openfinance.payeeverification.domain.port.in.VerifyPayeeUseCase;
 import com.enterprise.openfinance.payeeverification.infrastructure.outbox.OutboxRelay;
+import com.enterprise.openfinance.payeeverification.infrastructure.persistence.JpaPayeeDirectoryAdapter;
+import com.enterprise.openfinance.payeeverification.infrastructure.persistence.SpringDataPayeeDirectoryRepository;
 import com.enterprise.openfinance.payeeverification.infrastructure.outbox.SpringDataOutboxRepository;
 import com.enterprise.openfinance.payeeverification.support.DpopTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -98,6 +101,7 @@ class PayeeVerificationServiceIT {
     @Autowired VerifyPayeeUseCase useCase;
     @Autowired PlatformTransactionManager transactionManager;
     @SpyBean SpringDataOutboxRepository outbox;
+    @Autowired SpringDataPayeeDirectoryRepository directoryRows;
     @MockBean JwtDecoder jwtDecoder;
     @MockBean KafkaTemplate<String, String> kafka;
 
@@ -339,6 +343,28 @@ class PayeeVerificationServiceIT {
 
         assertThat(jdbc.queryForObject("select parked_reason || '|' || (parked_by = session_user) from " + SCHEMA
             + ".outbox_event", String.class)).isEqualTo("INC-1234 topic ACL missing, replay after fix|true");
+    }
+
+    /** Port-level predicate: the directory matches on scheme AND identification, exactly, after normalisation. */
+    @Test
+    void directoryPortMatchesOnSchemeAndIdentificationTogether() {
+        JpaPayeeDirectoryAdapter port = new JpaPayeeDirectoryAdapter(directoryRows);
+        jdbc.update("insert into " + SCHEMA + ".payee_directory_entry (scheme_name, identification, holder_name,"
+            + " account_type, account_status, updated_at) values ('SAMPLEOTHER', ?, 'Other Scheme Holder', 'PERSONAL',"
+            + " 'CLOSED', now())", TAREQ_ID);
+        try {
+            assertThat(port.find(AccountReference.of("SAMPLE", TAREQ_ID)))
+                .map(PayeeDirectoryEntry::holderName).contains("Al Tareq Trading LLC");
+            assertThat(port.find(AccountReference.of(" sample ", "sample-ae28 0330 0000 0012 3456 789")))
+                .map(PayeeDirectoryEntry::holderName).contains("Al Tareq Trading LLC");
+            assertThat(port.find(AccountReference.of("SAMPLEOTHER", TAREQ_ID)))
+                .map(PayeeDirectoryEntry::holderName).contains("Other Scheme Holder");
+            assertThat(port.find(AccountReference.of("BBAN", TAREQ_ID))).isEmpty();
+            assertThat(port.find(AccountReference.of("SAMPLE", TAREQ_ID + "0"))).isEmpty();
+            assertThat(port.find(AccountReference.of("SAMPLE", TAREQ_ID.substring(0, TAREQ_ID.length() - 1)))).isEmpty();
+        } finally {
+            jdbc.update("delete from " + SCHEMA + ".payee_directory_entry where scheme_name = 'SAMPLEOTHER'");
+        }
     }
 
     private OutboxRelay relay() {
