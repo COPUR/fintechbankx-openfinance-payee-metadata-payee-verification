@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "payee.name" . }}
+  namespace: {{ include "payee.namespace" . }}
+  labels:
+    {{- include "payee.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "payee.selectorLabels" . | nindent 6 }}

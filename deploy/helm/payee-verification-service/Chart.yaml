@@ -1,0 +1,9 @@
+apiVersion: v2
+name: payee-verification-service
+description: svc-of-payee-verification, Confirmation of Payee decisions for FinTechBankX Open Finance.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+annotations:
+  fintechbankx.io/service-id: svc-of-payee-verification
+  fintechbankx.io/owning-squad: Payee and Metadata Squad

@@ -1,0 +1,91 @@
+name: Deployability
+
+# Proves every change still produces a runnable image, valid deployment
+# manifests and a working data migration. Nothing is pushed or applied here.
+
+on:
+  pull_request:
+    branches: [main, dev, staging]
+  push:
+    branches: [main, dev, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    name: deploy/container-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --tag payee-verification-service:${{ github.sha }} .
+      - name: Image runs as non-root
+        run: |
+          user="$(docker image inspect --format '{{.Config.User}}' payee-verification-service:${{ github.sha }})"
+          echo "image user: $user"
+          test "$user" = "10001:10001"
+
+  helm:
+    name: deploy/helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Lint and render chart
+        run: |
+          chart=deploy/helm/payee-verification-service
+          args="--set image.repository=ci/payee-verification-service --set image.tag=${{ github.sha }} --set externalSecret.remoteSecretName=ci/payee-verification-service/db-app"
+          helm lint "$chart" $args
+          helm template ci "$chart" $args > /dev/null
+          helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
+          helm template ci "$chart" $args --set kafka.profile=kafka-strimzi > /dev/null
+      - name: Chart carries no mesh overrides
+        run: |
+          rendered="$(helm template ci deploy/helm/payee-verification-service --set image.repository=ci/x --set image.tag=x --set externalSecret.remoteSecretName=x)"
+          if echo "$rendered" | grep -Eq 'kind: (PeerAuthentication|DestinationRule)|excludeInboundPorts'; then
+            echo "The chart must not weaken the mesh (platform contract)."
+            exit 1
+          fi
+
+  terraform:
+    name: deploy/terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  data-migration:
+    name: deploy/data-migration-rehearsal
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rehearsal
+          POSTGRES_PASSWORD: rehearsal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rehearsal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: rehearsal
+      PGPASSWORD: rehearsal
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse schema migration, sample seed and core-banking directory import
+        run: scripts/migration/verify-migration.sh

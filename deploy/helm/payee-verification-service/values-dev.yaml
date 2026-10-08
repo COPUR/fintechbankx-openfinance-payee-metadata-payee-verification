@@ -1,0 +1,20 @@
+# Dev: smaller footprint, still two replicas so rollouts and PDBs are exercised.
+replicaCount: 2
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 4
+podDisruptionBudget:
+  minAvailable: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 768Mi
+topologySpread:
+  maxSkew: 2
+config:
+  DB_POOL_MAX: "5"
+  # Dev may use the sample directory rows (db/seed); staging and prod never do.
+  PAYEE_DIRECTORY_SEED_ENABLED: "true"
+  TRACING_SAMPLING_PROBABILITY: "1.0"

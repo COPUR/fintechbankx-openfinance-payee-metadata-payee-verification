@@ -1,0 +1,100 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml.
+
+serviceId: svc-of-payee-verification
+# Platform contract: every svc-of-* service runs in the open-finance namespace
+# (istio-injection=enabled, mesh-wide STRICT mTLS, default-deny authorization).
+namespace: open-finance
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/payee-verification-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  # Must equal the service slug: IRSA trust and mesh principals use
+  # system:serviceaccount:open-finance:payee-verification-service.
+  name: payee-verification-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+podLabels:
+  app.kubernetes.io/part-of: fintechbankx-open-finance
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 768Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 60
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  minAvailable: 2
+
+kafka:
+  # Spring profile with the Kafka authentication: kafka-msk (AWS) or kafka-strimzi.
+  profile: kafka-msk
+  # Secret with user.crt, user.key and ca.crt when profile is kafka-strimzi.
+  strimziTlsSecret: kafka-client-tls
+
+# Non-secret runtime settings, rendered into a ConfigMap.
+config:
+  DB_URL: ""                      # deploy/terraform output jdbc_url
+  DB_USERNAME: payee_verification_app
+  DB_POOL_MAX: "10"
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
+  OIDC_ISSUER_URI: ""             # https://<identity-host>/realms/fintechbankx
+  OIDC_JWK_SET_URI: ""            # <issuer>/protocol/openid-connect/certs
+  OIDC_AUDIENCE: svc-of-payee-verification
+  DPOP_PUBLIC_BASE_URL: ""        # external API base URL the TPP signs in DPoP htu
+  COP_CLOSE_MATCH_THRESHOLD: "85"
+  COP_DIRECTORY_CACHE_TTL: PT30S
+  OUTBOX_RELAY_ENABLED: "true"
+  PAYEE_DIRECTORY_SEED_ENABLED: "false"   # sample data; never true outside local/dev
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
+  TRACING_SAMPLING_PROBABILITY: "0.1"
+
+# Database credential, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  # Secrets Manager secret <env>/payee-verification-service/db-app
+  # (deploy/terraform output app_db_secret_name).
+  remoteSecretName: ""
+  refreshInterval: 1h
+
+networkPolicy:
+  enabled: true
+  # Namespaces whose pods may call the API: the ingress gateway, plus
+  # payments for internal pre-payment checks.
+  apiCallerNamespaces:
+    - istio-ingress
+    - payments
+  prometheusNamespace: observability
+  observabilityNamespace: observability
+  # VPC private subnets that hold Aurora and the MSK brokers.
+  privateCidrs:
+    - 10.0.0.0/8
+  # 9098 MSK IAM, 9093 Strimzi TLS.
+  kafkaPorts:
+    - 9098
+    - 9093
+
+topologySpread:
+  maxSkew: 1

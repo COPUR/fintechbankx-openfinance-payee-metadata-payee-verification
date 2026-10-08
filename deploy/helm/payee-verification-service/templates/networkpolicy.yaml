@@ -1,0 +1,79 @@
+{{- if .Values.networkPolicy.enabled }}
+# Ingress: the API only from the gateway (and listed caller namespaces),
+# metrics only from Prometheus. Egress: DNS, PostgreSQL, Kafka, the identity
+# provider, istiod and the OpenTelemetry collector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "payee.name" . }}
+  namespace: {{ include "payee.namespace" . }}
+  labels:
+    {{- include "payee.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "payee.selectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.apiCallerNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ $.Values.service.port }}
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.prometheusNamespace }}
+      ports:
+        - port: {{ .Values.service.managementPort }}
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - port: 15012
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }}
+      ports:
+        - port: 4317
+          protocol: TCP
+        - port: 4318
+          protocol: TCP
+    - to:
+        {{- range .Values.networkPolicy.privateCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: 5432
+          protocol: TCP
+        {{- range .Values.networkPolicy.kafkaPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        # OIDC JWKS of the identity provider and AWS STS/MSK IAM endpoints.
+        - port: 443
+          protocol: TCP
+{{- end }}
