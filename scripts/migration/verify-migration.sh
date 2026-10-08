@@ -35,7 +35,7 @@ expect() {
 }
 
 new_password() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
-pw_migrate="$(new_password)"; pw_app="$(new_password)"; pw_import="$(new_password)"
+pw_migrate="$(new_password)"; pw_app="$(new_password)"; pw_import="$(new_password)"; pw_ops="$(new_password)"
 # as_role <role> <psql args...>: connect to the rehearsal database as that role.
 as_role() {
   local role="$1" pw; shift
@@ -43,6 +43,7 @@ as_role() {
     payee_verification_migrate) pw="$pw_migrate" ;;
     payee_verification_app) pw="$pw_app" ;;
     payee_verification_import) pw="$pw_import" ;;
+    payee_verification_ops) pw="$pw_ops" ;;
   esac
   PGUSER="$role" PGPASSWORD="$pw" PGOPTIONS="-c search_path=$schema" \
     psql --no-psqlrc -v ON_ERROR_STOP=1 -q -d "$db" "$@"
@@ -62,7 +63,8 @@ echo "== DBA bootstrap (db/bootstrap/bootstrap-roles.sql)"
 psql_db -f "$root"/db/bootstrap/bootstrap-roles.sql
 psql_db -c "ALTER ROLE payee_verification_migrate PASSWORD '$pw_migrate'" \
   -c "ALTER ROLE payee_verification_app PASSWORD '$pw_app'" \
-  -c "ALTER ROLE payee_verification_import PASSWORD '$pw_import'"
+  -c "ALTER ROLE payee_verification_import PASSWORD '$pw_import'" \
+  -c "ALTER ROLE payee_verification_ops PASSWORD '$pw_ops'"
 
 echo "== migrations (db/migration) as the schema owner"
 as_flyway -c "CREATE SCHEMA $schema"
@@ -199,7 +201,7 @@ denied() {
   grep -Eq "permission denied|append-only" "$work/denied.err" || { cat "$work/denied.err" >&2; exit 1; }
   echo "ok   $label"
 }
-app=payee_verification_app; imp=payee_verification_import; own=payee_verification_migrate
+app=payee_verification_app; imp=payee_verification_import; own=payee_verification_migrate; ops=payee_verification_ops
 allowed "app reads the directory" $app "select count(*) from payee_directory_entry"
 allowed "app records a decision and reads it back" $app "select count(*) from payee_verification"
 allowed "app writes, relays and purges the outbox" $app "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.rehearsal.v1', '{}', 'ix-1', now()); update outbox_event set published_at = now(); delete from outbox_event"
@@ -217,13 +219,20 @@ denied "history cannot be truncated, even by the owner" $own "truncate payee_dir
 echo "== outbox parking (ADR-021 decision 4)"
 denied "app cannot park an outbox row by hand" $app "select park_outbox_event(gen_random_uuid(), 'x')"
 denied "import cannot park an outbox row" $imp "select park_outbox_event(gen_random_uuid(), 'x')"
+denied "ops cannot read the outbox directly" $ops "select count(*) from outbox_event"
+denied "ops cannot change the outbox directly" $ops "update outbox_event set parked_at = now()"
+denied "ops cannot read decisions" $ops "select count(*) from payee_verification"
+expect "park_outbox_event runs as its owner with a pinned search_path" "t|payee_verification_migrate|search_path=$schema, pg_temp" \
+  "select prosecdef || '|' || proowner::regrole || '|' || array_to_string(proconfig, ',') from pg_proc where oid = '$schema.park_outbox_event(uuid, text)'::regprocedure"
+expect "only the ops role (and the owner) may execute park_outbox_event" "payee_verification_ops" \
+  "select string_agg(grantee, ',' order by grantee) from information_schema.routine_privileges where routine_schema = '$schema' and routine_name = 'park_outbox_event' and privilege_type = 'EXECUTE' and grantee <> 'payee_verification_migrate'"
 event_id="$(as_role payee_verification_app -At -c "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.rehearsal.v1', '{}', 'ix-2', now()) returning event_id")"
-if PGUSER=payee_verification_migrate PGPASSWORD="$pw_migrate" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" " " >/dev/null 2>"$work/park.err"; then
+if PGUSER=payee_verification_ops PGPASSWORD="$pw_ops" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" " " >/dev/null 2>"$work/park.err"; then
   echo "FAIL operator park accepted a blank reason" >&2; exit 1
 fi
 grep -q "a reason is required" "$work/park.err" && echo "ok   operator park needs a reason"
-PGUSER=payee_verification_migrate PGPASSWORD="$pw_migrate" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" "REHEARSAL-1 dropped by operator" >/dev/null
-expect "operator park records the reason and the login role" "REHEARSAL-1 dropped by operator|payee_verification_migrate" \
+PGUSER=payee_verification_ops PGPASSWORD="$pw_ops" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" "REHEARSAL-1 dropped by operator" >/dev/null
+expect "operator park records the reason and the ops login" "REHEARSAL-1 dropped by operator|payee_verification_ops" \
   "select parked_reason || '|' || parked_by from $schema.outbox_event where event_id = '$event_id'"
 expect "an operator park is left for the relay to count once" "f" \
   "select park_counted from $schema.outbox_event where event_id = '$event_id'"
@@ -251,7 +260,7 @@ expect "history is classified like the main table" "t" \
 
 if [ "${KEEP_REHEARSAL_DB:-false}" != "true" ]; then
   psql_admin -c "DROP DATABASE \"$db\""
-  for role in payee_verification_migrate payee_verification_app payee_verification_import; do
+  for role in payee_verification_migrate payee_verification_app payee_verification_import payee_verification_ops; do
     psql_admin -c "DROP ROLE $role" 2>/dev/null || echo "note: role $role kept (still referenced elsewhere)"
   done
 fi

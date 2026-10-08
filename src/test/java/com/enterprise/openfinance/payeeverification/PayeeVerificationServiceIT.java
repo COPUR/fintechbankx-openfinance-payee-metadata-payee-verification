@@ -343,6 +343,10 @@ class PayeeVerificationServiceIT {
 
         assertThat(jdbc.queryForObject("select parked_reason || '|' || (parked_by = session_user) from " + SCHEMA
             + ".outbox_event", String.class)).isEqualTo("INC-1234 topic ACL missing, replay after fix|true");
+        // The ops login executes it without table rights: SECURITY DEFINER, search_path pinned (V9).
+        assertThat(jdbc.queryForObject("select prosecdef || '|' || array_to_string(proconfig, ',') from pg_proc where oid = '"
+            + SCHEMA + ".park_outbox_event(uuid, text)'::regprocedure", String.class))
+            .isEqualTo("true|search_path=" + SCHEMA + ", pg_temp");
     }
 
     @Test
