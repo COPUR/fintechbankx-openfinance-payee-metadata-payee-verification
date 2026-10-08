@@ -164,6 +164,14 @@ jobs:
         if: ${{ hashFiles('openapi/*.yaml') != '' || hashFiles('api/openapi/*.yaml') != '' || hashFiles('src/main/resources/openapi/*.yaml') != '' }}
         run: ./scripts/ci/fapi-dpop-guard.sh
 
+      - name: AsyncAPI contract gate (validate + catalog breaking check against origin/main)
+        # ADR-019 section 5. @asyncapi/cli 2.13.0; breaking rules copied unchanged from the
+        # asyncapi catalog at commit b0e31ee (ASYNCAPI_DIR=api/asyncapi); needs fetch-depth: 0.
+        env:
+          NPM_CONFIG_CACHE: /tmp/.npm
+          BASE_REF: origin/main
+        run: ./scripts/ci/asyncapi-gate.sh
+
       - name: Guardrail - disallow generic map request payloads
         shell: bash
         run: |

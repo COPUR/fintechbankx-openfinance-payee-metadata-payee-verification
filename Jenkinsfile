@@ -59,6 +59,9 @@ pipeline {
                     export TEST_DB_USERNAME=qg TEST_DB_PASSWORD="$db_password"
                   fi
                   ./gradlew -p "${SERVICE_DIR}" --no-daemon clean check
+                  # AsyncAPI contract gate (ADR-019 section 5), as ci/test runs it.
+                  git rev-parse --verify -q origin/main >/dev/null || git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+                  BASE_REF=origin/main ./scripts/ci/asyncapi-gate.sh
                 '''
             }
         }
