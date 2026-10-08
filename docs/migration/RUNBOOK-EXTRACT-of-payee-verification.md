@@ -39,15 +39,29 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
 ### DBA bootstrap (once per environment)
 
 1. `terraform apply` in `deploy/terraform` with `environments/<env>.tfvars`.
-2. With the RDS-managed admin secret (`master_user_secret_arn`), create role
-   `payee_verification_app` (LOGIN, no superuser) owning schema
-   `sc_of_payee_verification`, and an import role with INSERT/UPDATE on
-   `payee_directory_entry` only (after the first Flyway run).
-3. Write `{"username": "payee_verification_app", "password": "<generated>"}` to
-   Secrets Manager `<env>/payee-verification-service/db-app`.
-4. Install the chart with `serviceAccount.roleArn`, `config.DB_URL` and
-   `externalSecret.remoteSecretName` from the Terraform outputs. Flyway creates
-   the schema objects on first start.
+2. With the RDS-managed admin secret (`master_user_secret_arn`), before the
+   first deploy:
+   `psql "host=<writer> dbname=db_of_payee_verification_<env> user=<admin> sslmode=require" -v ON_ERROR_STOP=1 -f db/bootstrap/bootstrap-roles.sql`.
+   It creates three LOGIN roles without passwords and lets only the owner role
+   create the schema. Set each password with `\password <role>` and store
+   `{"username","password"}` in the matching secret:
+
+   | Role | Secret (Terraform output) | Used by | Privileges |
+   |---|---|---|---|
+   | `payee_verification_migrate` | `<env>/payee-verification-service/db-migration` (`migration_db_secret_name`) | Flyway, `migrate` init container | owns `sc_of_payee_verification` |
+   | `payee_verification_app` | `<env>/payee-verification-service/db-app` (`app_db_secret_name`) | service container | SELECT directory; SELECT/INSERT decisions; SELECT/INSERT/UPDATE/DELETE outbox; SELECT/INSERT/DELETE DPoP replay; owns nothing |
+   | `payee_verification_import` | `<env>/payee-verification-service/db-import` (`import_db_secret_name`) | operator running the import | SELECT/INSERT/UPDATE on `payee_directory_entry`, TEMPORARY |
+
+   Flyway grants the table privileges (`V6__grant_least_privilege.sql`); if a
+   role was created after the first deploy, re-run that file with psql as
+   `payee_verification_migrate`.
+3. Install the chart with `serviceAccount.roleArn`, `config.DB_URL`,
+   `externalSecret.remoteSecretName` and `externalSecret.migrationRemoteSecretName`
+   from the Terraform outputs. The `migrate` init container applies the
+   migrations and exits; the service container starts with Flyway off.
+4. Import the directory as `payee_verification_import`
+   (`PGUSER=payee_verification_import db/import/import-payee-directory.sh <export.csv>`).
+   Every change is recorded in `payee_directory_entry_history`.
 
 ## 3. Cutover
 
@@ -67,8 +81,9 @@ No dual writes at any step: only the service records decisions.
   connection alarms, 5xx rate and p99 latency.
 - Reprocessing: events are at-least-once; consumers de-duplicate on `eventId`.
 - Retention: outbox rows 7 days; decisions are kept (evidence) until the
-  owning squad sets a retention period; deleting old decisions is allowed,
-  updating them is blocked by a trigger.
+  owning squad sets a retention period; deleting old decisions is allowed
+  (as the schema owner; the runtime role cannot delete them), updating them
+  is blocked by a trigger.
 
 ## 5. Acceptance checklist
 

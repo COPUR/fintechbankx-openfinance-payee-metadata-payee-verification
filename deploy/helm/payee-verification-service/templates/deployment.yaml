@@ -33,9 +33,13 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
         prometheus.io/path: /actuator/prometheus
+        # 5432: the migrate init container runs before the Istio sidecar exists; Aurora is
+        # outside the mesh and reached with TLS (sslmode=require).
         {{- if eq .Values.kafka.profile "kafka-strimzi" }}
-        # Strimzi uses its own mutual TLS on 9093; the sidecar must not wrap it.
-        traffic.sidecar.istio.io/excludeOutboundPorts: "9093"
+        # 9093: Strimzi uses its own mutual TLS; the sidecar must not wrap it.
+        traffic.sidecar.istio.io/excludeOutboundPorts: "5432,9093"
+        {{- else }}
+        traffic.sidecar.istio.io/excludeOutboundPorts: "5432"
         {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
@@ -60,6 +64,37 @@ spec:
           labelSelector:
             matchLabels:
               {{- include "payee.selectorLabels" . | nindent 14 }}
+      initContainers:
+        # Flyway with the schema owner's credential (secret db-migration); exits when the
+        # schema is current. The service container below never holds this credential.
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--spring.main.web-application-type=none"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "payee.name" . }}
+          env:
+            - name: DB_USERNAME
+              value: {{ required "migration.username is required" .Values.migration.username | quote }}
+            - name: OUTBOX_RELAY_ENABLED
+              value: "false"
+            - name: TRACING_ENABLED
+              value: "false"
+            {{- if .Values.externalSecret.enabled }}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "payee.migrationSecretName" . }}
+                  key: SPRING_DATASOURCE_PASSWORD
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- include "payee.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: payee-verification-service
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
@@ -70,6 +105,9 @@ spec:
             - name: management
               containerPort: {{ .Values.service.managementPort }}
           env:
+            # Migrations ran in the init container; the runtime role owns nothing.
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
             - name: SPRING_PROFILES_ACTIVE
               value: {{ .Values.kafka.profile | quote }}
             {{- if eq .Values.kafka.profile "kafka-strimzi" }}
@@ -121,10 +159,7 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
+            {{- include "payee.containerSecurityContext" . | nindent 12 }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

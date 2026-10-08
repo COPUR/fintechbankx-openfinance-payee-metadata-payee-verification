@@ -37,6 +37,12 @@ spring:
     # The optional db/seed location (repeatable R__ seed) may be switched off after it
     # was applied once; "*:missing" tolerates that (typed patterns need Flyway Teams).
     ignore-migration-patterns: "*:future,*:missing"
+    # The Helm "migrate" init container runs Flyway as the schema owner
+    # (payee_verification_migrate); the service container sets SPRING_FLYWAY_ENABLED=false.
+    user: ${FLYWAY_USER:${spring.datasource.username}}
+    password: ${FLYWAY_PASSWORD:${spring.datasource.password:}}
+    # Names the session in payee_directory_entry_history.application_name (seed rows).
+    init-sqls: SET application_name = 'payee-verification-flyway'
   kafka:
     # Runtime-neutral: authentication comes from the kafka-msk or kafka-strimzi
     # profile (SPRING_PROFILES_ACTIVE), see application-kafka-*.yml.

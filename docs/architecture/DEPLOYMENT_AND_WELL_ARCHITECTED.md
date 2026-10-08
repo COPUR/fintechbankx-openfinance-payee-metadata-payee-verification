@@ -45,12 +45,23 @@ is not evidence that anything is deployed or compliant.
   PostgreSQL, Kafka and 443.
 - Pods: non-root, read-only root filesystem, all capabilities dropped,
   RuntimeDefault seccomp.
-- Data: KMS-encrypted Aurora, snapshots, logs and Secrets Manager secret
-  `<env>/payee-verification-service/db-app` (synced by External Secrets from
-  ClusterSecretStore `aws-secrets-manager`). The IRSA role reads only that
-  secret and produces only to `evt.of.payee.*`.
+- Data: KMS-encrypted Aurora, snapshots, logs and Secrets Manager secrets.
+  Three database roles (`db/bootstrap/bootstrap-roles.sql`): the service runs
+  as `payee_verification_app` (`db-app`; SELECT on the directory, SELECT/INSERT
+  on decisions, the outbox and DPoP replay DML; owns nothing), Flyway runs in
+  the `migrate` init container as the schema owner `payee_verification_migrate`
+  (`db-migration`, never mounted into the service container), and the directory
+  import runs as `payee_verification_import` (`db-import`; SELECT/INSERT/UPDATE
+  on `payee_directory_entry` only). Secrets are synced by External Secrets from
+  ClusterSecretStore `aws-secrets-manager`; the IRSA role produces only to
+  `evt.of.payee.*`.
+- Audit: every insert and update of `payee_directory_entry` lands in the
+  append-only `payee_directory_entry_history` (login role, `application_name`,
+  time, old/new type, status and `updated_at`; holder names only as SHA-256
+  digests), written by a `SECURITY DEFINER` trigger and protected against
+  UPDATE, DELETE and TRUNCATE.
 - Personal data: holder names stay in `payee_directory_entry` (column comment
-  marks them PII). Decisions store a SHA-256 account reference, never the
+  marks them PII); the history keeps only their digests (also marked PII). Decisions store a SHA-256 account reference, never the
   typed name, the holder name or the account number; events carry the same
   facts; logs carry ids only. The holder name is returned only for a
   CloseMatch; unknown accounts read as `Closed` (no account enumeration).

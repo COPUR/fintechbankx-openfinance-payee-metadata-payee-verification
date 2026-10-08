@@ -55,8 +55,14 @@ it should not depend on a synchronous call to core banking per request.
   personal-data store: encrypted with the service KMS key, reachable only from
   the service's pods, credentials in Secrets Manager, backups retained per the
   Terraform `backup_retention_days`.
-- The import writes with a database role that needs INSERT/UPDATE on
-  `payee_directory_entry` only; it should not be the application role.
+- The import writes as `payee_verification_import` (SELECT/INSERT/UPDATE on
+  `payee_directory_entry` only, secret `db-import`), never as the application
+  role, which can only read the directory. Every insert and update is
+  recorded in the append-only `payee_directory_entry_history` (login role from
+  `session_user`, `application_name`, time, old and new type, status and
+  `updated_at`). Holder names are not copied into the history: it keeps a
+  SHA-256 of the old and new name, enough to show that and when a name
+  changed, and the digests are classified like the name itself.
 
 ## Alternatives considered
 

@@ -23,3 +23,15 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- define "payee.secretName" -}}
 {{ include "payee.name" . }}-db
 {{- end -}}
+
+{{- define "payee.migrationSecretName" -}}
+{{ include "payee.name" . }}-db-migration
+{{- end -}}
+
+{{/* Container hardening shared by the migration init container and the service. */}}
+{{- define "payee.containerSecurityContext" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop: ["ALL"]
+{{- end -}}

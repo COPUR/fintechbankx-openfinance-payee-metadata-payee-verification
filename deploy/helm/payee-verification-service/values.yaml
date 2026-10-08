@@ -55,6 +55,7 @@ kafka:
 # DPOP_PUBLIC_BASE_URL is empty (and KAFKA_BOOTSTRAP_SERVERS while the relay is on).
 config:
   DB_URL: ""                      # required: deploy/terraform output jdbc_url
+  # Runtime role: DML the use cases need, owns nothing (db/bootstrap, V6__grant_least_privilege.sql).
   DB_USERNAME: payee_verification_app
   DB_POOL_MAX: "10"
   KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
@@ -69,7 +70,11 @@ config:
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
   TRACING_SAMPLING_PROBABILITY: "0.1"
 
-# Database credential, synced from AWS Secrets Manager by External Secrets Operator.
+# Flyway runs in the "migrate" init container as the schema owner.
+migration:
+  username: payee_verification_migrate
+
+# Database credentials, synced from AWS Secrets Manager by External Secrets Operator.
 externalSecret:
   enabled: true
   secretStoreRef:
@@ -78,6 +83,9 @@ externalSecret:
   # Secrets Manager secret <env>/payee-verification-service/db-app
   # (deploy/terraform output app_db_secret_name).
   remoteSecretName: ""
+  # Secrets Manager secret <env>/payee-verification-service/db-migration
+  # (output migration_db_secret_name); only the migrate init container reads it.
+  migrationRemoteSecretName: ""
   refreshInterval: 1h
 
 networkPolicy:

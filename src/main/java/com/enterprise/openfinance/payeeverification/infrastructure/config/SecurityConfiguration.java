@@ -7,6 +7,7 @@ import com.enterprise.openfinance.payeeverification.infrastructure.security.Dpop
 import com.enterprise.openfinance.payeeverification.infrastructure.security.SecurityErrorWriter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -35,7 +36,9 @@ import java.util.Collection;
 @Configuration
 public class SecurityConfiguration {
 
+    /** Web only: the migrate init container runs the image without a web server. */
     @Bean
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     SecurityFilterChain apiSecurity(HttpSecurity http, SecurityErrorWriter errors, DpopProofValidator dpopValidator)
         throws Exception {
         http

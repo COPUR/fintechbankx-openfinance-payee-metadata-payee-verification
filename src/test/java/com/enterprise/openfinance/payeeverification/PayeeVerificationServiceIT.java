@@ -114,13 +114,53 @@ class PayeeVerificationServiceIT {
             select table_name from information_schema.tables
             where table_schema = ? and table_name <> 'flyway_schema_history' order by table_name
             """, String.class, SCHEMA);
-        assertThat(tables).containsExactly("dpop_proof_replay", "outbox_event", "payee_directory_entry", "payee_verification");
+        assertThat(tables).containsExactly("dpop_proof_replay", "outbox_event", "payee_directory_entry",
+            "payee_directory_entry_history", "payee_verification");
 
         String comment = jdbc.queryForObject(
             "select col_description('" + SCHEMA + ".payee_directory_entry'::regclass, 4)", String.class);
         assertThat(comment).startsWith("PII");
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".payee_directory_entry", Integer.class))
             .isGreaterThanOrEqualTo(5);
+    }
+
+    @Test
+    void directoryChangesLandInTheHistoryWithNameDigestsOnly() {
+        // One connection, so the session's application_name reaches the trigger.
+        JdbcTemplate writable = new JdbcTemplate(new org.springframework.jdbc.datasource.SingleConnectionDataSource(
+            System.getenv("TEST_DB_URL"), env("TEST_DB_USERNAME", "payee_test"), env("TEST_DB_PASSWORD", "payee_test"), true));
+        writable.execute("set application_name = 'it-history'");
+        writable.update("insert into " + SCHEMA + ".payee_directory_entry (scheme_name, identification, holder_name, account_type,"
+            + " account_status, updated_at) values ('IT', 'IT-HISTORY-1', 'History Holder LLC', 'BUSINESS', 'ACTIVE', now())"
+            + " on conflict (scheme_name, identification) do update set account_status = 'ACTIVE', holder_name = 'History Holder LLC'");
+        writable.update("update " + SCHEMA + ".payee_directory_entry set account_status = 'CLOSED', holder_name = 'Renamed Holder LLC'"
+            + " where identification = 'IT-HISTORY-1'");
+
+        var last = writable.queryForMap("select * from " + SCHEMA + ".payee_directory_entry_history"
+            + " where identification = 'IT-HISTORY-1' and application_name = 'it-history' order by history_id desc limit 1");
+        assertThat(last).containsEntry("operation", "UPDATE")
+            .containsEntry("old_account_status", "ACTIVE").containsEntry("new_account_status", "CLOSED")
+            .containsEntry("old_holder_name_sha256", sha256("History Holder LLC"))
+            .containsEntry("new_holder_name_sha256", sha256("Renamed Holder LLC"));
+        assertThat(last.values().stream().map(String::valueOf).collect(Collectors.joining("|")))
+            .doesNotContain("History Holder", "Renamed Holder");
+        assertThatThrownBy(() -> writable.update("delete from " + SCHEMA + ".payee_directory_entry_history"))
+            .hasMessageContaining("append-only");
+        writable.update("delete from " + SCHEMA + ".payee_directory_entry where identification = 'IT-HISTORY-1'");
+    }
+
+    private static String env(String name, String fallback) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static String sha256(String value) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

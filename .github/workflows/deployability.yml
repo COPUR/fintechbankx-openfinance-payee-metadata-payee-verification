@@ -33,6 +33,7 @@ jobs:
       # Placeholder values for every setting the chart requires (no real endpoints).
       CI_VALUES: >-
         --set externalSecret.remoteSecretName=ci/payee-verification-service/db-app
+        --set externalSecret.migrationRemoteSecretName=ci/payee-verification-service/db-migration
         --set config.DB_URL=jdbc:postgresql://ci:5432/db_of_payee_verification_ci
         --set config.OIDC_ISSUER_URI=https://identity.ci.example/realms/fintechbankx
         --set config.OIDC_JWK_SET_URI=https://identity.ci.example/realms/fintechbankx/protocol/openid-connect/certs

@@ -139,13 +139,36 @@ resource "aws_rds_cluster_instance" "database" {
   promotion_tier                        = count.index
 }
 
-# Application credential (role payee_verification_app, owner of schema
-# sc_of_payee_verification). The DBA bootstrap in docs/migration creates the
-# role and writes {"username", "password"} here; Terraform never sees the
-# value. Path follows the platform contract: <env>/<service-slug>/db-app.
+# Database credentials, one per role (db/bootstrap/bootstrap-roles.sql). The
+# DBA bootstrap in docs/migration creates the roles and writes
+# {"username", "password"} into each secret; Terraform never sees a value.
+# Paths follow the platform contract <env>/<service-slug>/db-<purpose>; all use
+# the tagged key above so External Secrets Operator can decrypt them.
+
+# Runtime role payee_verification_app: the DML its use cases need, owns nothing.
 resource "aws_secretsmanager_secret" "app_database" {
   name                    = "${var.environment}/${local.service_slug}/db-app"
-  description             = "Application database credential for ${local.service_id}"
+  description             = "Runtime database credential (payee_verification_app, owns nothing) for ${local.service_id}"
+  kms_key_id              = aws_kms_key.database.arn
+  recovery_window_in_days = 7
+}
+
+# Schema owner payee_verification_migrate: Flyway only (Helm migrate init container).
+# Name per the platform contract's database-roles pattern (<env>/<slug>/db-migration).
+# Created here because this service declares its own Aurora cluster; the
+# aurora-postgresql module that creates it for other services is not used.
+resource "aws_secretsmanager_secret" "migration_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-migration"
+  description             = "Schema owner credential (payee_verification_migrate, Flyway only) for ${local.service_id}"
+  kms_key_id              = aws_kms_key.database.arn
+  recovery_window_in_days = 7
+}
+
+# Import role payee_verification_import: SELECT/INSERT/UPDATE on payee_directory_entry,
+# for db/import/import-payee-directory.sh. Read by the operator, never synced into the cluster.
+resource "aws_secretsmanager_secret" "import_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-import"
+  description             = "Payee directory import credential (payee_verification_import) for ${local.service_id}"
   kms_key_id              = aws_kms_key.database.arn
   recovery_window_in_days = 7
 }

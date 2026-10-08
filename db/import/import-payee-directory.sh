@@ -6,8 +6,13 @@
 # (docs/architecture/decisions/ADR-0001-payee-directory-projection.md), the
 # directory is refreshed from a core-banking export with this script.
 #
-# Usage: PGHOST=... PGDATABASE=db_of_payee_verification_<env> PGUSER=... \
+# Usage: PGHOST=... PGDATABASE=db_of_payee_verification_<env> PGUSER=payee_verification_import \
 #        PGPASSWORD=... db/import/import-payee-directory.sh <export.csv>
+#
+# Runs as the import role payee_verification_import (SELECT/INSERT/UPDATE on
+# payee_directory_entry only; secret <env>/payee-verification-service/db-import).
+# Every inserted or updated row is recorded in payee_directory_entry_history
+# (role, application name, time, old/new values; names only as SHA-256).
 #
 # CSV header: scheme_name,identification,holder_name,account_type,account_status,updated_at
 #   account_type   PERSONAL | BUSINESS
@@ -35,6 +40,9 @@ schema="${PAYEE_SCHEMA:-sc_of_payee_verification}"
 case "$schema" in
   *[!a-z0-9_]*) echo "invalid schema name" >&2; exit 2 ;;
 esac
+
+# Recorded in payee_directory_entry_history.application_name for every row this run changes.
+export PGAPPNAME="${PGAPPNAME:-payee-verification-import}"
 
 psql --no-psqlrc --quiet -v ON_ERROR_STOP=1 --set=schema="$schema" <<SQL
 \\set QUIET on
