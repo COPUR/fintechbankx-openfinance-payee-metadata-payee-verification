@@ -12,6 +12,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.net.URI;
 
 /**
  * Requires a DPoP-bound access token and a valid DPoP proof on the
@@ -31,9 +32,20 @@ public class DpopEnforcementFilter extends OncePerRequestFilter {
         this.errors = errors;
     }
 
+    /**
+     * Decides on the decoded path, the one Spring MVC routes on: testing the raw URI
+     * would let /open-financ%65/... reach the controller without DPoP. A path that
+     * does not decode is filtered (fail closed).
+     */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith(PROTECTED_PREFIX);
+        String path;
+        try {
+            path = URI.create("http://localhost" + request.getRequestURI()).getPath();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        return path != null && !path.startsWith(PROTECTED_PREFIX);
     }
 
     @Override
