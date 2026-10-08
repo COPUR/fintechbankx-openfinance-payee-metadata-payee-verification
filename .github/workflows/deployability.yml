@@ -52,6 +52,22 @@ jobs:
           helm template ci "$chart" $args > /dev/null
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           helm template ci "$chart" $args --set kafka.profile=kafka-strimzi > /dev/null
+          # NetworkPolicy is opt-in (the mesh repository owns it): none by default ...
+          if helm template ci "$chart" $args | grep -q "kind: NetworkPolicy"; then
+            echo "NetworkPolicy must be off by default"; exit 1
+          fi
+          # ... and it renders when enabled with the database CIDRs.
+          helm lint "$chart" $args --set networkPolicy.enabled=true --set "networkPolicy.databaseCidrs={10.0.0.0/24}"
+          helm template ci "$chart" $args --set networkPolicy.enabled=true --set "networkPolicy.databaseCidrs={10.0.0.0/24}" \
+            | grep -q "kind: NetworkPolicy"
+      - name: Chart refuses an enabled NetworkPolicy without database CIDRs
+        run: |
+          chart=deploy/helm/payee-verification-service
+          if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES \
+               --set networkPolicy.enabled=true > /dev/null 2>&1; then
+            echo "networkPolicy.databaseCidrs must be required when the policy is enabled"
+            exit 1
+          fi
       - name: Chart refuses empty identity-provider settings
         run: |
           chart=deploy/helm/payee-verification-service

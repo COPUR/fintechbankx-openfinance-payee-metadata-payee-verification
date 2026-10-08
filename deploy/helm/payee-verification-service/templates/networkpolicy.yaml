@@ -1,4 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- if not .Values.networkPolicy.databaseCidrs }}
+{{- fail "networkPolicy.databaseCidrs is required: the Aurora subnet CIDRs the pods may reach on 5432" }}
+{{- end }}
 # Ingress: the API only from the gateway (and listed caller namespaces),
 # metrics only from Prometheus. Egress: DNS, PostgreSQL, Kafka, the identity
 # provider, istiod and the OpenTelemetry collector.
@@ -31,6 +34,12 @@ spec:
       ports:
         - port: {{ .Values.service.managementPort }}
           protocol: TCP
+    # Istio sidecar: 15021 health (rewritten kubelet probes), 15020 merged Prometheus metrics.
+    - ports:
+        - port: 15020
+          protocol: TCP
+        - port: 15021
+          protocol: TCP
   egress:
     - to:
         - namespaceSelector:
@@ -58,13 +67,19 @@ spec:
         - port: 4318
           protocol: TCP
     - to:
-        {{- range .Values.networkPolicy.privateCidrs }}
+        {{- range .Values.networkPolicy.databaseCidrs }}
         - ipBlock:
             cidr: {{ . }}
         {{- end }}
       ports:
         - port: 5432
           protocol: TCP
+    - to:
+        {{- range .Values.networkPolicy.kafkaCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
         {{- range .Values.networkPolicy.kafkaPorts }}
         - port: {{ . }}
           protocol: TCP

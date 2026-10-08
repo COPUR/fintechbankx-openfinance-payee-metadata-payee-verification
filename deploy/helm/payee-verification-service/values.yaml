@@ -87,17 +87,26 @@ externalSecret:
   # (output migration_db_secret_name); only the migrate init container reads it.
   migrationRemoteSecretName: ""
   refreshInterval: 1h
+  # Bump (e.g. to the rotation date) after rotating a password in Secrets Manager: the
+  # ExternalSecrets re-sync and checksum/secret rolls the pods onto the new credential.
+  rotation: ""
 
 networkPolicy:
-  enabled: true
+  # Opt-in. The platform mesh repository owns NetworkPolicy (cicd-templates
+  # 1dd1138 turns chart policies off by default); enable only where the mesh
+  # repository does not already cover this namespace.
+  enabled: false
   # Namespaces whose pods may call the API. Only the ingress gateway: no
   # internal service calls this TPP API, and service-role tokens are refused.
   apiCallerNamespaces:
     - istio-ingress
   prometheusNamespace: observability
   observabilityNamespace: observability
-  # VPC private subnets that hold Aurora and the MSK brokers.
-  privateCidrs:
+  # Aurora subnets (private_subnet_ids CIDRs); PostgreSQL is reached on 5432 only.
+  # Required when enabled: rendering fails while this list is empty.
+  databaseCidrs: []
+  # Subnets of the MSK / Strimzi brokers, reached on kafkaPorts only.
+  kafkaCidrs:
     - 10.0.0.0/8
   # 9098 MSK IAM, 9093 Strimzi TLS.
   kafkaPorts:
