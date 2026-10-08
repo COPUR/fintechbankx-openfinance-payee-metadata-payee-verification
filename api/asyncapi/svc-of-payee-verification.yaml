@@ -1,0 +1,303 @@
+# AsyncAPI contract for svc-of-payee-verification.
+# Status: Proposed. This repository owns the contract; the asyncapi catalog mirrors it.
+# Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-of-payee-verification.yaml
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-of-payee-verification
+info:
+  title: svc-of-payee-verification events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-of-payee-verification (repository fintechbankx-openfinance-payee-metadata-payee-verification).
+
+    Status: Proposed. Owner: Payee and Metadata Squad, Open Finance Tribe. Event namespace: `evt.of.payee`.
+
+    Every Confirmation of Payee decision is recorded in sc_of_payee_verification.payee_verification and, in the same
+    transaction, written to the transactional outbox; OutboxRelay publishes it. Delivery is at least once: consumers
+    de-duplicate on eventId.
+
+    Privacy: the payload carries ids and facts only. It never contains the name typed by the payer, the account
+    holder name or the raw account identification; the account is referenced by accountReferenceHash
+    (lower-case hex SHA-256 of `SCHEME:IDENTIFICATION`, pseudonymous, treat as confidential).
+
+    Every message uses the standard FinTechBankX envelope. Record key is the aggregateId (verificationId). Adding an
+    optional field is a minor change; any removal, rename or type change is a new major version on a new topic.
+  tags:
+  - name: open-finance
+  - name: evt.of.payee
+  x-service-id: svc-of-payee-verification
+  x-event-namespace: evt.of.payee
+  x-owning-squad: Payee and Metadata Squad
+defaultContentType: application/json
+servers:
+  kafka:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: FinTechBankX event platform. Amazon MSK with IAM authentication (SASL_SSL, AWS_MSK_IAM) on AWS.
+    variables:
+      bootstrapServers:
+        description: Bootstrap servers, injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mskIam'
+channels:
+  verificationCompleted:
+    address: evt.of.payee.verification-completed.v1
+    title: evt.of.payee.verification-completed.v1
+    description: OpenFinance.PayeeVerification.VerificationCompleted.v1. A Confirmation of Payee decision was recorded.
+    messages:
+      PayeeVerificationCompleted:
+        $ref: '#/components/messages/PayeeVerificationCompleted'
+    bindings:
+      kafka:
+        topic: evt.of.payee.verification-completed.v1
+        partitions: 6
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  deadLetter:
+    address: evt.of.payee.dlq.v1
+    title: evt.of.payee.dlq.v1
+    description: Dead-letter topic for the evt.of.payee namespace. Written by consumers (not by
+      svc-of-payee-verification) after bounded retries; replayed by the owning consumer squad.
+    messages:
+      DeadLetter:
+        $ref: '#/components/messages/DeadLetter'
+    bindings:
+      kafka:
+        topic: evt.of.payee.dlq.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 1209600000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishPayeeVerificationCompleted:
+    action: send
+    title: Publish OpenFinance.PayeeVerification.VerificationCompleted.v1
+    summary: svc-of-payee-verification publishes OpenFinance.PayeeVerification.VerificationCompleted.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/verificationCompleted'
+    messages:
+    - $ref: '#/channels/verificationCompleted/messages/PayeeVerificationCompleted'
+components:
+  schemas:
+    EventEnvelope:
+      type: object
+      description: >-
+        Standard envelope for every FinTechBankX domain event (catalog asyncapi/common/event-envelope.yaml).
+        Consumers must be idempotent on eventId and ignore unknown fields.
+      required:
+      - eventId
+      - eventType
+      - occurredAt
+      - aggregateId
+      - aggregateVersion
+      - correlationId
+      - causationId
+      - producer
+      - data
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Unique id of this event; the idempotency key for consumers.
+        eventType:
+          type: string
+          pattern: '^[A-Z][A-Za-z]*\.[A-Z][A-Za-z]*\.[A-Z][A-Za-z]*\.v[0-9]+$'
+        occurredAt:
+          type: string
+          format: date-time
+          description: UTC instant at which the decision was made.
+        aggregateId:
+          type: string
+          minLength: 1
+          description: Id of the aggregate that emitted the event. Also the Kafka record key.
+        aggregateVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Decisions are insert-only, so this is always 0.
+        correlationId:
+          type: string
+          minLength: 1
+          description: The x-fapi-interaction-id of the request that produced the decision.
+        causationId:
+          type:
+          - string
+          - 'null'
+          description: Always null; a verification starts its flow.
+        producer:
+          type: string
+          pattern: '^svc-[a-z]+-[a-z0-9-]+$'
+        data:
+          type: object
+    EventHeaders:
+      type: object
+      description: Kafka record headers. They duplicate envelope fields for routing and tracing.
+      required:
+      - eventType
+      - eventId
+      - correlationId
+      properties:
+        eventType:
+          type: string
+        eventId:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+        x-fapi-interaction-id:
+          type: string
+        traceparent:
+          type: string
+          description: W3C trace context of the request that recorded the decision, when traced.
+    DeadLetterHeaders:
+      type: object
+      description: Headers added by the consumer that moves a poison message to the DLQ. Never the exception message.
+      required:
+      - eventType
+      - eventId
+      - dlq-original-topic
+      - dlq-consumer-group
+      - dlq-attempts
+      - dlq-failed-at
+      properties:
+        eventType:
+          type: string
+        eventId:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+        dlq-original-topic:
+          type: string
+        dlq-original-partition:
+          type: integer
+        dlq-original-offset:
+          type: integer
+          format: int64
+        dlq-consumer-group:
+          type: string
+        dlq-attempts:
+          type: integer
+          minimum: 1
+        dlq-error-class:
+          type: string
+        dlq-failed-at:
+          type: string
+          format: date-time
+    PayeeVerificationCompletedData:
+      type: object
+      description: Payload of OpenFinance.PayeeVerification.VerificationCompleted.v1. Ids and facts only.
+      additionalProperties: false
+      properties:
+        verificationId:
+          type: string
+          format: uuid
+          description: Verification id (same as aggregateId).
+        tppId:
+          type: string
+          minLength: 1
+          description: OAuth client id of the caller (TPP or internal service), taken from the access token.
+        accountReferenceHash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Lower-case hex SHA-256 of SCHEME:IDENTIFICATION (for example IBAN:AE070331234567890123456).
+        outcome:
+          type: string
+          enum:
+          - MATCH
+          - CLOSE_MATCH
+          - NO_MATCH
+          - UNABLE_TO_CHECK
+        reasonCode:
+          type: string
+          enum:
+          - EXACT_NAME_MATCH
+          - CLOSE_NAME_MATCH
+          - NAME_MISMATCH
+          - ACCOUNT_NOT_FOUND
+          - ACCOUNT_CLOSED
+          - ACCOUNT_DECEASED
+        occurredAt:
+          type: string
+          format: date-time
+      required:
+      - verificationId
+      - tppId
+      - accountReferenceHash
+      - outcome
+      - reasonCode
+      - occurredAt
+  messages:
+    PayeeVerificationCompleted:
+      name: PayeeVerificationCompleted
+      title: OpenFinance.PayeeVerification.VerificationCompleted.v1
+      summary: A Confirmation of Payee decision was recorded.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OpenFinance.PayeeVerification.VerificationCompleted.v1
+            producer:
+              const: svc-of-payee-verification
+            data:
+              $ref: '#/components/schemas/PayeeVerificationCompletedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (verificationId).
+          bindingVersion: 0.5.0
+      examples:
+      - name: closeMatch
+        summary: A close match recorded for a TPP.
+        payload:
+          eventId: 3f1d2c4b-5a6e-4f70-8a9b-0c1d2e3f4a5b
+          eventType: OpenFinance.PayeeVerification.VerificationCompleted.v1
+          occurredAt: '2026-10-08T09:30:00Z'
+          aggregateId: 7f0c3c1e-4b8e-4d2a-9a51-0c1d2e3f4a5b
+          aggregateVersion: 0
+          correlationId: 5b8e0a52-1f3c-4d55-9d2e-6a7b8c9d0e1f
+          causationId: null
+          producer: svc-of-payee-verification
+          data:
+            verificationId: 7f0c3c1e-4b8e-4d2a-9a51-0c1d2e3f4a5b
+            tppId: tpp-alpha
+            accountReferenceHash: b538b8430ce7c538678b8dd357195baa7651210e6a4462655e5dd941afefcd15
+            outcome: CLOSE_MATCH
+            reasonCode: CLOSE_NAME_MATCH
+            occurredAt: '2026-10-08T09:30:00Z'
+      x-source-class: com.enterprise.openfinance.payeeverification.domain.event.PayeeVerificationCompleted
+    DeadLetter:
+      name: DeadLetter
+      title: Dead letter for evt.of.payee
+      summary: A message from this namespace that a consumer could not process after bounded retries.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/DeadLetterHeaders'
+      payload:
+        $ref: '#/components/schemas/EventEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: Original record key (aggregateId).
+          bindingVersion: 0.5.0
+  securitySchemes:
+    mskIam:
+      type: scramSha512
+      description: >-
+        Placeholder for Amazon MSK IAM (SASL mechanism AWS_MSK_IAM, which AsyncAPI 3.0 has no scheme for).
+        Clients authenticate with their IRSA role; in-cluster Strimzi uses mutual TLS instead.
