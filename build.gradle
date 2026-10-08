@@ -7,6 +7,7 @@ plugins {
 
 group = 'com.enterprise.openfinance'
 version = '0.1.0'
+description = 'svc-of-payee-verification: Confirmation of Payee decisions for FinTechBankX Open Finance'
 
 java {
     toolchain {
@@ -28,8 +29,26 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+tasks.withType(JavaCompile).configureEach {
+    // Spring 6.1+ resolves @PathVariable / @RequestHeader names from parameter metadata.
+    options.compilerArgs << '-parameters'
+}
+
 test {
     useJUnitPlatform()
+}
+
+springBoot {
+    mainClass = 'com.enterprise.openfinance.payeeverification.Application'
+    buildInfo()
+}
+
+bootJar {
+    archiveFileName = 'payee-verification-service.jar'
+}
+
+jar {
+    enabled = false
 }
 
 jacoco {
