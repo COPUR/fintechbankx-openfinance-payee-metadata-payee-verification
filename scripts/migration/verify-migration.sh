@@ -219,10 +219,11 @@ denied "history cannot be truncated, even by the owner" $own "truncate payee_dir
 echo "== outbox parking (ADR-021 decision 4)"
 denied "app cannot park an outbox row by hand" $app "select park_outbox_event(gen_random_uuid(), 'x')"
 denied "import cannot park an outbox row" $imp "select park_outbox_event(gen_random_uuid(), 'x')"
-denied "ops cannot read the outbox directly" $ops "select count(*) from outbox_event"
+denied "ops cannot read event payloads" $ops "select payload from outbox_event"
 denied "ops cannot change the outbox directly" $ops "update outbox_event set parked_at = now()"
-denied "ops cannot read decisions" $ops "select count(*) from payee_verification"
-expect "park_outbox_event runs as its owner with a pinned search_path" "t|payee_verification_migrate|search_path=$schema, pg_temp" \
+denied "ops cannot read decision details" $ops "select interaction_id, match_outcome from payee_verification"
+allowed "ops finds rows to park (stuck rows, a TPP's unparked rows)" $ops "select o.event_id, o.created_at from outbox_event o join payee_verification v on v.verification_id::text = o.aggregate_id where v.tpp_id = 'x' and o.published_at is null and o.parked_at is null order by o.created_seq"
+expect "park_outbox_event runs as its owner with a pinned search_path" "true|payee_verification_migrate|search_path=$schema, pg_temp" \
   "select prosecdef || '|' || proowner::regrole || '|' || array_to_string(proconfig, ',') from pg_proc where oid = '$schema.park_outbox_event(uuid, text)'::regprocedure"
 expect "only the ops role (and the owner) may execute park_outbox_event" "payee_verification_ops" \
   "select string_agg(grantee, ',' order by grantee) from information_schema.routine_privileges where routine_schema = '$schema' and routine_name = 'park_outbox_event' and privilege_type = 'EXECUTE' and grantee <> 'payee_verification_migrate'"

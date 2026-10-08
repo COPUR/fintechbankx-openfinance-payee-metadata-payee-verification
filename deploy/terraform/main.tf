@@ -173,6 +173,17 @@ resource "aws_secretsmanager_secret" "import_database" {
   recovery_window_in_days = 7
 }
 
+# Operator role payee_verification_ops: EXECUTE on park_outbox_event only (V9), for
+# db/ops/park-outbox-event.sh. The DBA fills the value (Terraform never sees it, so no
+# fintechbankx.io/value-in-state tag); read by the operator, never synced into the cluster
+# (no ExternalSecret references it).
+resource "aws_secretsmanager_secret" "ops_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-ops"
+  description             = "Outbox operator credential (payee_verification_ops, park_outbox_event only) for ${local.service_id}"
+  kms_key_id              = aws_kms_key.database.arn
+  recovery_window_in_days = 7
+}
+
 # --- IRSA: the pods' AWS identity -------------------------------------------
 
 data "aws_iam_policy_document" "irsa_trust" {

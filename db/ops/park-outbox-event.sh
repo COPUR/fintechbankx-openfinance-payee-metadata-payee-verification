@@ -5,8 +5,13 @@
 # decided the event will not be sent; the row stays in outbox_event with
 # parked_at, parked_reason and parked_by (your login role).
 #
+# Runs as the operator role payee_verification_ops (secret
+# <env>/payee-verification-service/db-ops), which may only EXECUTE the SECURITY
+# DEFINER function park_outbox_event (V9) and read the columns needed to find
+# rows; it needs no schema-owner credential.
+#
 # Usage:
-#   PGPASSWORD=... db/ops/park-outbox-event.sh "<conninfo as payee_verification_migrate>" <event-id> "<reason>"
+#   PGPASSWORD=... db/ops/park-outbox-event.sh "<conninfo as payee_verification_ops>" <event-id> "<reason>"
 # The reason should name the incident or ticket and why the event is dropped.
 # Refuses a blank reason and an unknown, published or already parked event.
 # The park leaves park_counted false; the relay counts it once on its next run

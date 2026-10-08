@@ -28,6 +28,11 @@ output "import_db_secret_name" {
   value       = aws_secretsmanager_secret.import_database.name
 }
 
+output "ops_db_secret_name" {
+  description = "Secrets Manager name the DBA fills for payee_verification_ops (db/ops/park-outbox-event.sh)."
+  value       = aws_secretsmanager_secret.ops_database.name
+}
+
 output "master_user_secret_arn" {
   description = "RDS-managed admin credential, for the DBA bootstrap only."
   value       = aws_rds_cluster.database.master_user_secret[0].secret_arn

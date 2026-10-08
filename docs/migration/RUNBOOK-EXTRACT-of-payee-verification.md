@@ -47,7 +47,7 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
 2. With the RDS-managed admin secret (`master_user_secret_arn`), before the
    first deploy:
    `psql "host=<writer> dbname=db_of_payee_verification_<env> user=<admin> sslmode=require" -v ON_ERROR_STOP=1 -f db/bootstrap/bootstrap-roles.sql`.
-   It creates three LOGIN roles without passwords and lets only the owner role
+   It creates four LOGIN roles without passwords and lets only the owner role
    create the schema. Set each password with `\password <role>` and store
    `{"username","password"}` in the matching secret:
 
@@ -56,9 +56,11 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
    | `payee_verification_migrate` | `<env>/payee-verification-service/db-migration` (`migration_db_secret_name`) | Flyway, `migrate` init container | owns `sc_of_payee_verification` |
    | `payee_verification_app` | `<env>/payee-verification-service/db-app` (`app_db_secret_name`) | service container | SELECT directory; SELECT/INSERT decisions; SELECT/INSERT/UPDATE/DELETE outbox; SELECT/INSERT/DELETE DPoP replay; owns nothing |
    | `payee_verification_import` | `<env>/payee-verification-service/db-import` (`import_db_secret_name`) | operator running the import | SELECT/INSERT/UPDATE on `payee_directory_entry`, TEMPORARY |
+   | `payee_verification_ops` | `<env>/payee-verification-service/db-ops` (`ops_db_secret_name`; filled by the DBA, never synced into the cluster) | operator parking outbox rows (`db/ops/park-outbox-event.sh`) | EXECUTE on `park_outbox_event` (SECURITY DEFINER, V9); SELECT on the outbox ids, topic, timestamps and park columns and on `payee_verification (verification_id, tpp_id)`; no payloads, no writes |
 
-   Flyway grants the table privileges (`V6__grant_least_privilege.sql`); if a
-   role was created after the first deploy, re-run that file with psql as
+   Flyway grants the table privileges (`V6__grant_least_privilege.sql`, and
+   `V9__park_outbox_event_ops_role.sql` for the ops role); if a role was created
+   after the first deploy, re-run that file with psql as
    `payee_verification_migrate`.
 3. Install the chart with `serviceAccount.roleArn`, `config.DB_URL`,
    `externalSecret.remoteSecretName` and `externalSecret.migrationRemoteSecretName`
@@ -228,13 +230,16 @@ Alerts:
   `exception` names a payload error the code must fix, or `OperatorPark`.
 
 Parking by hand: only an operator may park a row the relay keeps retrying,
-once the squad has decided the event will not be sent. Run, as the schema
-owner (`<env>/payee-verification-service/db-migration`, break-glass):
+once the squad has decided the event will not be sent. Run as the ops role
+`payee_verification_ops` (`<env>/payee-verification-service/db-ops`); the
+schema-owner credential is not needed:
 
-    PGPASSWORD=... db/ops/park-outbox-event.sh "host=<writer> dbname=db_of_payee_verification_<env> user=payee_verification_migrate sslmode=require" <event-id> "<incident or ticket>: <why>"
+    PGPASSWORD=... db/ops/park-outbox-event.sh "host=<writer> dbname=db_of_payee_verification_<env> user=payee_verification_ops sslmode=verify-full sslrootcert=<rds-ca-bundle>/global-bundle.pem" <event-id> "<incident or ticket>: <why>"
 
-It calls `park_outbox_event(event_id, reason)` (`V7__outbox_parking.sql`),
-which records `parked_at`, the reason and the login role in `parked_by`, and
+It calls `park_outbox_event(event_id, reason)` (`V7__outbox_parking.sql`,
+SECURITY DEFINER since V9, so the ops role needs no table rights), which
+records `parked_at`, the reason and the operator's login (`session_user`,
+here `payee_verification_ops`) in `parked_by`, and
 refuses a blank reason or an unknown, published or already parked row.
 The relay counts the park once on its next run
 (`outbox_parked_events_total{exception="OperatorPark"}`). Rows parked before
