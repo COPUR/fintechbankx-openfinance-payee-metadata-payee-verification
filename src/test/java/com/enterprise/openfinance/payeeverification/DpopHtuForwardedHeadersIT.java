@@ -16,6 +16,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -89,8 +90,22 @@ class DpopHtuForwardedHeadersIT {
             .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void shouldCheckTheProofWhenThePathPrefixIsPercentEncoded() throws Exception {
+        // /open-financ%65/... reaches the controller, so it must not escape the DPoP filter:
+        // a proof for another host is refused there as it is on the plain path.
+        mvc.perform(withProof(URI.create("/open-financ%65/v1/confirmation-of-payee/confirmation"),
+                "https://evil.example" + PATH))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.code").value("INVALID_DPOP_PROOF"));
+    }
+
     private MockHttpServletRequestBuilder withProof(String htu) {
-        return post(PATH).contentType(MediaType.APPLICATION_JSON)
+        return withProof(URI.create(PATH), htu);
+    }
+
+    private MockHttpServletRequestBuilder withProof(URI path, String htu) {
+        return post(path).contentType(MediaType.APPLICATION_JSON)
             .header("Authorization", "DPoP tpp-token")
             .header("DPoP", dpop.proof("POST", htu, "tpp-token", Instant.now()))
             .header("X-FAPI-Interaction-ID", UUID.randomUUID().toString())
