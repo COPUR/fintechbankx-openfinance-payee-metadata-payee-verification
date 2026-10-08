@@ -90,11 +90,10 @@ externalSecret:
 
 networkPolicy:
   enabled: true
-  # Namespaces whose pods may call the API: the ingress gateway, plus
-  # payments for internal pre-payment checks.
+  # Namespaces whose pods may call the API. Only the ingress gateway: no
+  # internal service calls this TPP API, and service-role tokens are refused.
   apiCallerNamespaces:
     - istio-ingress
-    - payments
   prometheusNamespace: observability
   observabilityNamespace: observability
   # VPC private subnets that hold Aurora and the MSK brokers.

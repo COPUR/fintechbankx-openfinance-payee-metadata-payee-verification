@@ -15,9 +15,9 @@ import java.io.IOException;
 
 /**
  * Requires a DPoP-bound access token and a valid DPoP proof on the
- * TPP-facing API (platform contract, FAPI 2.0). Internal client-credentials
- * callers (realm role {@code service}) whose tokens are not DPoP-bound are
- * exempt; mesh mTLS binds them instead.
+ * TPP-facing API (platform contract, FAPI 2.0) for every caller. No internal
+ * service calls this API, so there is no exemption: a token carrying the
+ * realm role {@code service} is refused with 403 even when it is DPoP-bound.
  */
 public class DpopEnforcementFilter extends OncePerRequestFilter {
 
@@ -46,13 +46,14 @@ public class DpopEnforcementFilter extends OncePerRequestFilter {
         }
         Jwt jwt = token.getToken();
         String boundJkt = TppIdentity.boundJkt(jwt);
-        if (boundJkt == null && TppIdentity.isInternalService(jwt)) {
-            chain.doFilter(request, response);
-            return;
-        }
         String proof = request.getHeader("DPoP");
         if (proof == null || proof.isBlank()) {
             errors.unauthorized(request, response, "AUTH_HEADER_MISSING", "Missing required header: DPoP", "invalid_dpop_proof");
+            return;
+        }
+        if (TppIdentity.isInternalService(jwt)) {
+            errors.write(request, response, HttpServletResponse.SC_FORBIDDEN, "SERVICE_TOKEN_NOT_ALLOWED",
+                "Internal service tokens are not accepted on the TPP API");
             return;
         }
         if (boundJkt == null) {

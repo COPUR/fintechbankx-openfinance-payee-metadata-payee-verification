@@ -63,6 +63,21 @@ public final class DpopTestSupport {
             .build();
     }
 
+    /** Internal-service token (realm role service) that is also bound to this key. */
+    public Jwt boundServiceToken(String tokenValue, String clientId, Instant now) {
+        return Jwt.withTokenValue(tokenValue)
+            .header("alg", "RS256")
+            .issuer(ISSUER)
+            .audience(List.of(AUDIENCE))
+            .subject("service-account-" + clientId)
+            .claim("azp", clientId)
+            .claim("cnf", Map.of("jkt", thumbprint()))
+            .claim("realm_access", Map.of("roles", List.of("service")))
+            .issuedAt(now.minusSeconds(10))
+            .expiresAt(now.plusSeconds(300))
+            .build();
+    }
+
     /** Client-credentials token of an internal service: realm role service, not DPoP-bound. */
     public static Jwt serviceToken(String tokenValue, String clientId, Instant now) {
         return Jwt.withTokenValue(tokenValue)

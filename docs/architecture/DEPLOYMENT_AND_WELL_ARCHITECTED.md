@@ -36,12 +36,14 @@ is not evidence that anything is deployed or compliant.
   `cnf.jkt`, `htm`/`htu` (`htu` against `DPOP_PUBLIC_BASE_URL` plus the
   request path, never Host or `X-Forwarded-*`, which are not trusted:
   `forward-headers-strategy: none`), `iat` window, `ath`, single-use `jti` stored in
-  PostgreSQL so replicas share replay protection). Internal callers with realm
-  role `service` and no `cnf` are exempt (mesh mTLS). The TPP id is taken from
+  PostgreSQL so replicas share replay protection). There is no exemption: no
+  internal service calls this API, so every caller needs DPoP, and a token
+  with realm role `service` is refused with 403 `SERVICE_TOKEN_NOT_ALLOWED`
+  even when DPoP-bound. The TPP id is taken from
   the token, never from the body.
 - Mesh-wide STRICT mTLS and default-deny come from the platform; the chart
   ships no PeerAuthentication/DestinationRule. A NetworkPolicy limits ingress
-  to the gateway, `payments` and Prometheus, and egress to DNS, istiod, OTel,
+  to the gateway and Prometheus, and egress to DNS, istiod, OTel,
   PostgreSQL, Kafka and 443.
 - Pods: non-root, read-only root filesystem, all capabilities dropped,
   RuntimeDefault seccomp.

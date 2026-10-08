@@ -40,6 +40,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -204,18 +205,30 @@ class PayeeVerificationControllerTest {
     }
 
     @Test
-    void internalServiceCallerIsExemptFromDpop() throws Exception {
-        when(useCase.verify(any())).thenReturn(result(MatchOutcome.MATCH, AccountStatus.ACTIVE,
-            VerificationReasonCode.EXACT_NAME_MATCH, null));
-
+    void internalServiceTokenWithoutDpopIsRejected() throws Exception {
+        // No internal caller needs the TPP API, so there is no DPoP exemption any more.
         mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
                 .header("Authorization", "Bearer service-token")
                 .header("X-FAPI-Interaction-ID", "ix-8").content(BODY))
-            .andExpect(status().isOk());
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.code").value("AUTH_HEADER_MISSING"));
 
-        ArgumentCaptor<VerifyPayeeCommand> command = ArgumentCaptor.forClass(VerifyPayeeCommand.class);
-        verify(useCase).verify(command.capture());
-        assertThat(command.getValue().tppId()).isEqualTo("svc-pay-initiation-settlement");
+        verifyNoInteractions(useCase);
+    }
+
+    @Test
+    void internalServiceTokenIsRefusedEvenWhenDpopBound() throws Exception {
+        when(jwtDecoder.decode("bound-service-token"))
+            .thenReturn(dpop.boundServiceToken("bound-service-token", "svc-pay-initiation-settlement", Instant.now()));
+
+        mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "DPoP bound-service-token")
+                .header("DPoP", dpop.proof("POST", URL, "bound-service-token", Instant.now()))
+                .header("X-FAPI-Interaction-ID", "ix-8b").content(BODY))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("SERVICE_TOKEN_NOT_ALLOWED"));
+
+        verifyNoInteractions(useCase);
     }
 
     @Test
