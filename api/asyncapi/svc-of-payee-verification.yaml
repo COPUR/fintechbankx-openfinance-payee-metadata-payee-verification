@@ -19,6 +19,11 @@ info:
     holder name or the raw account identification; the account is referenced by accountReferenceHash
     (lower-case hex SHA-256 of `SCHEME:IDENTIFICATION`, pseudonymous, treat as confidential).
 
+    Topic (matches the platform topic catalog): evt.of.payee.verification-completed.v1, 6 partitions,
+    replication factor 3, cleanup.policy delete, retention 7 days. This provider declares no dead-letter
+    topic: DLQs are owned by each consumer (ADR-019, ADR-024). Publish failures are handled in the outbox
+    (ADR-021 decision 4), never by writing to another topic.
+
     Every message uses the standard FinTechBankX envelope. Record key is the aggregateId (verificationId). Adding an
     optional field is a minor change; any removal, rename or type change is a new major version on a new topic.
   tags:
@@ -55,25 +60,6 @@ channels:
           cleanup.policy:
           - delete
           retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  deadLetter:
-    address: evt.of.payee.dlq.v1
-    title: evt.of.payee.dlq.v1
-    description: Dead-letter topic for the evt.of.payee namespace. Written by consumers (not by
-      svc-of-payee-verification) after bounded retries; replayed by the owning consumer squad.
-    messages:
-      DeadLetter:
-        $ref: '#/components/messages/DeadLetter'
-    bindings:
-      kafka:
-        topic: evt.of.payee.dlq.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 1209600000
           max.message.bytes: 1048576
         bindingVersion: 0.5.0
 operations:
@@ -157,41 +143,6 @@ components:
         traceparent:
           type: string
           description: W3C trace context of the request that recorded the decision, when traced.
-    DeadLetterHeaders:
-      type: object
-      description: Headers added by the consumer that moves a poison message to the DLQ. Never the exception message.
-      required:
-      - eventType
-      - eventId
-      - dlq-original-topic
-      - dlq-consumer-group
-      - dlq-attempts
-      - dlq-failed-at
-      properties:
-        eventType:
-          type: string
-        eventId:
-          type: string
-          format: uuid
-        correlationId:
-          type: string
-        dlq-original-topic:
-          type: string
-        dlq-original-partition:
-          type: integer
-        dlq-original-offset:
-          type: integer
-          format: int64
-        dlq-consumer-group:
-          type: string
-        dlq-attempts:
-          type: integer
-          minimum: 1
-        dlq-error-class:
-          type: string
-        dlq-failed-at:
-          type: string
-          format: date-time
     PayeeVerificationCompletedData:
       type: object
       description: Payload of OpenFinance.PayeeVerification.VerificationCompleted.v1. Ids and facts only.
@@ -204,7 +155,7 @@ components:
         tppId:
           type: string
           minLength: 1
-          description: OAuth client id of the caller (TPP or internal service), taken from the access token.
+          description: OAuth client id of the TPP, taken from the access token (service-role tokens are refused).
         accountReferenceHash:
           type: string
           pattern: '^[0-9a-f]{64}$'
@@ -280,21 +231,6 @@ components:
             reasonCode: CLOSE_NAME_MATCH
             occurredAt: '2026-10-08T09:30:00Z'
       x-source-class: com.enterprise.openfinance.payeeverification.domain.event.PayeeVerificationCompleted
-    DeadLetter:
-      name: DeadLetter
-      title: Dead letter for evt.of.payee
-      summary: A message from this namespace that a consumer could not process after bounded retries.
-      contentType: application/json
-      headers:
-        $ref: '#/components/schemas/DeadLetterHeaders'
-      payload:
-        $ref: '#/components/schemas/EventEnvelope'
-      bindings:
-        kafka:
-          key:
-            type: string
-            description: Original record key (aggregateId).
-          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: scramSha512
