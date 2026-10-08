@@ -269,6 +269,15 @@ class PayeeVerificationControllerTest {
     }
 
     @Test
+    void aDisconnectedClientIsNotReportedAsAnError() throws Exception {
+        when(useCase.verify(any())).thenAnswer(invocation -> {
+            throw new org.springframework.web.context.request.async.AsyncRequestNotUsableException("gone");
+        });
+
+        tppCall(BODY, "ix-15").andExpect(status().isOk());
+    }
+
+    @Test
     void unsupportedMethodIsAClientError() throws Exception {
         mvc.perform(withProof(get(PATH), "GET", "ix-14"))
             .andExpect(status().isMethodNotAllowed())

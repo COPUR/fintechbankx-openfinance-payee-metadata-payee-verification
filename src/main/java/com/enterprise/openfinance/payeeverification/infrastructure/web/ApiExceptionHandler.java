@@ -15,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -57,6 +58,12 @@ class ApiExceptionHandler {
     @ExceptionHandler(IdempotencyKeyConflictException.class)
     ResponseEntity<ErrorResponse> handleConflict(IdempotencyKeyConflictException ex, HttpServletRequest request) {
         return error(HttpStatus.CONFLICT, "IDEMPOTENCY_CONFLICT", ex.getMessage(), request);
+    }
+
+    /** The client went away (e.g. a scraper closed the connection); nothing can be written. */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    void handleClientGone(AsyncRequestNotUsableException ex) {
+        log.debug("event=client_disconnected type={}", ex.getClass().getName());
     }
 
     @ExceptionHandler(Exception.class)
