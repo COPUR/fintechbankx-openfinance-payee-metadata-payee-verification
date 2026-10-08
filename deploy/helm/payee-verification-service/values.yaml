@@ -65,7 +65,7 @@ config:
   DPOP_PUBLIC_BASE_URL: ""        # public Open Finance gateway origin TPPs sign in DPoP htu, e.g. https://<api-gateway-host>; required
   COP_CLOSE_MATCH_THRESHOLD: "85"
   COP_DIRECTORY_CACHE_TTL: PT30S
-  OUTBOX_RELAY_ENABLED: "true"
+  OUTBOX_RELAY_ENABLED: "true"   # explicit: the app defaults to false; set "false" until the topic exists (runbook)
   PAYEE_DIRECTORY_SEED_ENABLED: "false"   # sample data; never true outside local/dev
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
   TRACING_SAMPLING_PROBABILITY: "0.1"

@@ -134,7 +134,8 @@ openfinance:
   outbox:
     retention: P7D
     relay:
-      enabled: ${OUTBOX_RELAY_ENABLED:true}
+      # Off unless enabled explicitly (Helm values set it where the topic exists).
+      enabled: ${OUTBOX_RELAY_ENABLED:false}
       interval: PT1S
       batch-size: 100
       # Longer than delivery.timeout.ms so a send fails inside Kafka first.

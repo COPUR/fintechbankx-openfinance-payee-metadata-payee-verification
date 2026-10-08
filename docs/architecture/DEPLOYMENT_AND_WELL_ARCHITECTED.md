@@ -22,7 +22,12 @@ is not evidence that anything is deployed or compliant.
   >= 2 in prod) for failover; PITR via `backup_retention_days` (35 in prod).
 - Kafka is off the request path: decisions and events commit in one database
   transaction and the relay publishes later. A broker outage grows
-  `outbox_pending_events` but does not fail verifications.
+  `outbox_pending_events` but does not fail verifications. Relay failures
+  follow ADR-021 decision 4: payload errors park the row and the relay goes
+  on; every other error stops the batch without marking a row and retries
+  with back-off, never parking by itself; `outbox_oldest_pending_age_seconds`
+  pages the owning squad and only an operator parks such a row, with a reason
+  (`db/ops/park-outbox-event.sh`).
 - A repeated request (same TPP, same `X-FAPI-Interaction-ID`) returns the
   stored decision, so client retries after a timeout are safe; concurrent
   duplicates are resolved by the unique key.
@@ -95,7 +100,9 @@ is not evidence that anything is deployed or compliant.
   `Deployability` (image non-root check, Helm lint/render, Terraform
   fmt/validate, data-migration rehearsal).
 - Metrics: `http_server_requests_seconds_*`, `hikaricp_*`, `jvm_*`,
-  `outbox_pending_events{service="svc-of-payee-verification"}`; traces via
+  `outbox_pending_events`, `outbox_oldest_pending_age_seconds`,
+  `outbox_parked_events`, `outbox_send_failures_total{exception}` (tags carry
+  no payee identifiers or account numbers); traces via
   OTLP to the platform collector; logs carry `traceId`, `spanId`, `requestId`.
 - Runbook: `docs/migration/RUNBOOK-EXTRACT-of-payee-verification.md`.
 

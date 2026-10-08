@@ -214,6 +214,20 @@ denied "import cannot read the history" $imp "select count(*) from payee_directo
 denied "history is append-only, even for the owner" $own "update payee_directory_entry_history set changed_by = 'x'"
 denied "history cannot be deleted, even by the owner" $own "delete from payee_directory_entry_history"
 denied "history cannot be truncated, even by the owner" $own "truncate payee_directory_entry_history"
+echo "== outbox parking (ADR-021 decision 4)"
+denied "app cannot park an outbox row by hand" $app "select park_outbox_event(gen_random_uuid(), 'x')"
+denied "import cannot park an outbox row" $imp "select park_outbox_event(gen_random_uuid(), 'x')"
+event_id="$(as_role payee_verification_app -At -c "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.rehearsal.v1', '{}', 'ix-2', now()) returning event_id")"
+if PGUSER=payee_verification_migrate PGPASSWORD="$pw_migrate" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" " " >/dev/null 2>"$work/park.err"; then
+  echo "FAIL operator park accepted a blank reason" >&2; exit 1
+fi
+grep -q "a reason is required" "$work/park.err" && echo "ok   operator park needs a reason"
+PGUSER=payee_verification_migrate PGPASSWORD="$pw_migrate" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" "REHEARSAL-1 dropped by operator" >/dev/null
+expect "operator park records the reason and the login role" "REHEARSAL-1 dropped by operator|payee_verification_migrate" \
+  "select parked_reason || '|' || parked_by from $schema.outbox_event where event_id = '$event_id'"
+expect "a parked row is out of the relay's batch" "0" \
+  "select count(*) from $schema.outbox_event where published_at is null and parked_at is null and event_id = '$event_id'"
+psql_db -c "delete from $schema.outbox_event where event_id = '$event_id'"
 expect "schema owned by the migrate role" "payee_verification_migrate" \
   "select nspowner::regrole from pg_namespace where nspname = '$schema'"
 expect "runtime and import roles own nothing" "0" \

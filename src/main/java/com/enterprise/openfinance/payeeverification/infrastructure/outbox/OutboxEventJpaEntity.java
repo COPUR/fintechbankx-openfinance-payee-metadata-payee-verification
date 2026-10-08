@@ -60,6 +60,17 @@ public class OutboxEventJpaEntity {
     @Column(name = "last_error", length = 512)
     private String lastError;
 
+    /** Set when the row is taken out of the relay (ADR-021 decision 4); never relayed again. */
+    @Column(name = "parked_at")
+    private Instant parkedAt;
+
+    @Column(name = "parked_reason", length = 512)
+    private String parkedReason;
+
+    /** {@code relay} for a payload error, otherwise the operator's database login. */
+    @Column(name = "parked_by", length = 128)
+    private String parkedBy;
+
     protected OutboxEventJpaEntity() {
     }
 
@@ -98,6 +109,9 @@ public class OutboxEventJpaEntity {
     public Instant getPublishedAt() { return publishedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
+    public Instant getParkedAt() { return parkedAt; }
+    public String getParkedReason() { return parkedReason; }
+    public String getParkedBy() { return parkedBy; }
 
     void markPublished(Instant at) {
         this.publishedAt = at;
@@ -105,8 +119,15 @@ public class OutboxEventJpaEntity {
         this.lastError = null;
     }
 
-    void markFailed(String error) {
+    void park(Instant at, String reason, String by) {
         this.attempts++;
-        this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
+        this.parkedAt = at;
+        this.parkedReason = truncate(reason, 512);
+        this.parkedBy = truncate(by, 128);
+        this.lastError = this.parkedReason;
+    }
+
+    private static String truncate(String value, int max) {
+        return value == null ? null : value.substring(0, Math.min(value.length(), max));
     }
 }

@@ -82,9 +82,50 @@ No dual writes at any step: only the service records decisions.
 
 ## 4. Operations
 
-- Alert on `outbox_pending_events` growth (relay or MSK down), Aurora ACU and
-  connection alarms, 5xx rate and p99 latency.
+- Alerts: Aurora ACU and connection alarms, 5xx rate and p99 latency, and the
+  outbox alerts below.
 - Reprocessing: events are at-least-once; consumers de-duplicate on `eventId`.
+
+### Outbox relay failures (ADR-021 decision 4)
+
+The relay is off unless `OUTBOX_RELAY_ENABLED=true` (the chart sets it
+explicitly). On a send failure it applies ADR-021 decision 4:
+
+| Error | Relay behaviour |
+|---|---|
+| Payload error: `RecordTooLargeException`, `SerializationException`, `InvalidTopicException` | parks the row (`parked_by = 'relay'`, `parked_reason` = the class) and continues with the next row |
+| Anything else: authorization (`TopicAuthorizationException`, `SaslAuthenticationException`, `ClusterAuthorizationException`), broker unavailable, timeouts, a producer that cannot be built, unclassified | stops the batch without marking any row (ordering kept), retries with back-off from 1 s doubling to 60 s; never parks the row, however long the error lasts |
+
+Metrics (Prometheus names), tagged by exception class only, never by
+identifiers or messages:
+
+| Metric | Meaning |
+|---|---|
+| `outbox_oldest_pending_age_seconds` | age of the oldest row neither published nor parked |
+| `outbox_send_failures_total{exception=...}` | failed sends by exception class |
+| `outbox_pending_events` | rows waiting to be sent |
+| `outbox_parked_events` | rows taken out of the relay (relay or operator) |
+
+Alerts:
+
+- **Page the owning squad** when `outbox_oldest_pending_age_seconds` is above
+  900 (15 minutes) for 5 minutes: the relay is stuck on a row. Look at
+  `outbox_send_failures_total` by `exception` and the relay's WARN log (event
+  id and exception class), then fix the cause (topic ACL, credentials, broker,
+  topic missing from the catalog). The relay resumes by itself.
+- Ticket when `outbox_parked_events` increases: a payload error the code must fix.
+
+Parking by hand: only an operator may park a row the relay keeps retrying,
+once the squad has decided the event will not be sent. Run, as the schema
+owner (`<env>/payee-verification-service/db-migration`, break-glass):
+
+    PGPASSWORD=... db/ops/park-outbox-event.sh "host=<writer> dbname=db_of_payee_verification_<env> user=payee_verification_migrate sslmode=require" <event-id> "<incident or ticket>: <why>"
+
+It calls `park_outbox_event(event_id, reason)` (`V7__outbox_parking.sql`),
+which records `parked_at`, the reason and the login role in `parked_by`, and
+refuses a blank reason or an unknown, published or already parked row.
+Parked rows are not purged. Find stuck rows with
+`select event_id, created_at from sc_of_payee_verification.outbox_event where published_at is null and parked_at is null order by created_seq limit 5;`.
 - Retention: outbox rows 7 days; decisions are kept (evidence) until the
   owning squad sets a retention period; deleting old decisions is allowed
   (as the schema owner; the runtime role cannot delete them), updating them

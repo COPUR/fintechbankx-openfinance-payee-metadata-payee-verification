@@ -10,6 +10,8 @@ import com.enterprise.openfinance.payeeverification.support.DpopTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +24,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.KafkaProducerException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -271,7 +274,7 @@ class PayeeVerificationServiceIT {
             "Al Tareq Trading LLC", "tpp-alpha", "it-ix-relay"));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(),
-            100, Duration.ofSeconds(5), Duration.ofDays(7));
+            100, Duration.ofSeconds(5), Duration.ofDays(7), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).isEqualTo(1);
 
@@ -280,6 +283,67 @@ class PayeeVerificationServiceIT {
         assertThat(record.getValue().topic()).isEqualTo("evt.of.payee.verification-completed.v1");
         assertThat(record.getValue().key()).isEqualTo(result.verification().verificationId().toString());
         assertThat(outbox.countByPublishedAtIsNull()).isZero();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void payloadErrorParksTheRowInPostgresAndTheNextRowIsSent() {
+        useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC", "tpp-alpha", "it-ix-park-1"));
+        useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC", "tpp-alpha", "it-ix-park-2"));
+        when(kafka.send(any(ProducerRecord.class)))
+            .thenReturn(CompletableFuture.failedFuture(new KafkaProducerException(null, "send failed",
+                new RecordTooLargeException("The message is 2000000 bytes"))))
+            .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        assertThat(relay().relayOnce()).isEqualTo(1);
+
+        assertThat(jdbc.queryForList("select parked_by || ':' || parked_reason from " + SCHEMA
+            + ".outbox_event where parked_at is not null", String.class))
+            .containsExactly("relay:RecordTooLargeException");
+        assertThat(count("outbox_event where published_at is not null")).isEqualTo(1);
+        assertThat(outbox.countByParkedAtIsNotNull()).isEqualTo(1);
+        assertThat(outbox.countByPublishedAtIsNullAndParkedAtIsNull()).isZero();
+        assertThat(outbox.oldestPendingAgeSeconds()).isZero();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void authorizationErrorLeavesEveryRowUntouchedAndTheOldestPendingAgeGrows() {
+        useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC", "tpp-alpha", "it-ix-auth"));
+        jdbc.update("update " + SCHEMA + ".outbox_event set created_at = now() - interval '2 hours'");
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
+            new KafkaProducerException(null, "send failed", new TopicAuthorizationException("not authorized"))));
+
+        assertThat(relay().relayOnce()).isZero();
+
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where published_at is null"
+            + " and parked_at is null and parked_reason is null and attempts = 0 and last_error is null", Long.class))
+            .isEqualTo(1L);
+        assertThat(outbox.oldestPendingAgeSeconds()).isGreaterThanOrEqualTo(7200.0);
+    }
+
+    @Test
+    void anOperatorParksAPendingRowWithAReason() {
+        useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC", "tpp-alpha", "it-ix-op"));
+        String eventId = jdbc.queryForObject("select event_id::text from " + SCHEMA + ".outbox_event", String.class);
+        JdbcTemplate operator = jdbc; // the test login stands in for the schema owner
+
+        assertThatThrownBy(() -> operator.queryForObject(
+            "select " + SCHEMA + ".park_outbox_event(?::uuid, ' ')", Object.class, eventId))
+            .hasMessageContaining("a reason is required");
+        operator.queryForObject("select " + SCHEMA + ".park_outbox_event(?::uuid, ?)", Object.class,
+            eventId, "INC-1234 topic ACL missing, replay after fix");
+        assertThatThrownBy(() -> operator.queryForObject(
+            "select " + SCHEMA + ".park_outbox_event(?::uuid, 'again')", Object.class, eventId))
+            .hasMessageContaining("already published or already parked");
+
+        assertThat(jdbc.queryForObject("select parked_reason || '|' || (parked_by = session_user) from " + SCHEMA
+            + ".outbox_event", String.class)).isEqualTo("INC-1234 topic ACL missing, replay after fix|true");
+    }
+
+    private OutboxRelay relay() {
+        return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(),
+            100, Duration.ofSeconds(5), Duration.ofDays(7), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     }
 
     private ResultActions call(String body, String interactionId, String proof) throws Exception {
