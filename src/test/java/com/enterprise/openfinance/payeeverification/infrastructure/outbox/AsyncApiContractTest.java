@@ -29,13 +29,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SuppressWarnings("unchecked")
 class AsyncApiContractTest {
 
+    private static final Path SPEC_DIR = Path.of("api/asyncapi");
+    private static final String ENVELOPE_FILE = "./common/event-envelope.yaml";
+
     private static Map<String, Object> spec;
 
     @BeforeAll
     static void load() throws IOException {
-        try (InputStream in = Files.newInputStream(Path.of("api/asyncapi/svc-of-payee-verification.yaml"))) {
-            spec = new Yaml().load(in);
-        }
+        spec = loadYaml(SPEC_DIR.resolve("svc-of-payee-verification.yaml"));
+    }
+
+    @Test
+    void envelopeAndHeadersAreTheSharedCatalogEnvelope() {
+        Map<String, Object> schemas = map(map(spec, "components"), "schemas");
+
+        assertThat(map(schemas, "EventEnvelope")).containsOnly(Map.entry("$ref", ENVELOPE_FILE + "#/EventEnvelope"));
+        assertThat(map(schemas, "EventHeaders")).containsOnly(Map.entry("$ref", ENVELOPE_FILE + "#/EventHeaders"));
     }
 
     @Test
@@ -83,12 +92,38 @@ class AsyncApiContractTest {
         assertThat(data().get("additionalProperties")).isEqualTo(false);
         assertThat(map(data(), "properties")).containsOnlyKeys(dataFields.toArray(String[]::new));
         assertThat((List<String>) data().get("required")).containsExactlyInAnyOrderElementsOf(dataFields);
-        assertThat((List<String>) map(map(map(spec, "components"), "schemas"), "EventEnvelope").get("required"))
+        assertThat((List<String>) resolve(map(map(map(spec, "components"), "schemas"), "EventEnvelope")).get("required"))
             .containsExactlyInAnyOrderElementsOf(envelopeFields);
     }
 
     private static Map<String, Object> data() {
         return map(map(map(spec, "components"), "schemas"), "PayeeVerificationCompletedData");
+    }
+
+    /** Follows a relative-file $ref such as ./common/event-envelope.yaml#/EventEnvelope; other schemas pass through. */
+    private static Map<String, Object> resolve(Map<String, Object> schema) {
+        Object ref = schema.get("$ref");
+        if (!(ref instanceof String target)) {
+            return schema;
+        }
+        int hash = target.indexOf("#/");
+        assertThat(hash).as("$ref %s has a JSON pointer", target).isPositive();
+        Map<String, Object> node;
+        try {
+            node = loadYaml(SPEC_DIR.resolve(target.substring(0, hash)).normalize());
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot read " + target, e);
+        }
+        for (String segment : target.substring(hash + 2).split("/")) {
+            node = map(node, segment);
+        }
+        return resolve(node);
+    }
+
+    private static Map<String, Object> loadYaml(Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            return new Yaml().load(in);
+        }
     }
 
     private static List<String> names(Enum<?>[] values) {

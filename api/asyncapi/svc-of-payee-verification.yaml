@@ -1,6 +1,7 @@
 # AsyncAPI contract for svc-of-payee-verification.
 # Status: Proposed. This repository owns the contract; the asyncapi catalog mirrors it.
 # Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-of-payee-verification.yaml
+# common/event-envelope.yaml is a verbatim copy of the catalog's shared envelope.
 asyncapi: 3.0.0
 id: urn:fintechbankx:asyncapi:svc-of-payee-verification
 info:
@@ -24,8 +25,12 @@ info:
     topic: DLQs are owned by each consumer (ADR-019, ADR-024). Publish failures are handled in the outbox
     (ADR-021 decision 4), never by writing to another topic.
 
-    Every message uses the standard FinTechBankX envelope. Record key is the aggregateId (verificationId). Adding an
-    optional field is a minor change; any removal, rename or type change is a new major version on a new topic.
+    Every message uses the standard FinTechBankX envelope (common/event-envelope.yaml). Record key is the aggregateId
+    (verificationId). Envelope values for this producer: occurredAt is the UTC instant at which the decision was made;
+    aggregateVersion is always 0 because decisions are insert-only; causationId is always null because a verification
+    starts its flow; correlationId is the x-fapi-interaction-id of the request that produced the decision; the
+    traceparent header, when present, is the W3C trace context of that request. Adding an optional field is a minor
+    change; any removal, rename or type change is a new major version on a new topic.
   tags:
   - name: open-finance
   - name: evt.of.payee
@@ -34,15 +39,26 @@ info:
   x-owning-squad: Payee and Metadata Squad
 defaultContentType: application/json
 servers:
-  kafka:
+  msk:
     host: '{bootstrapServers}'
     protocol: kafka-secure
-    description: FinTechBankX event platform. Amazon MSK with IAM authentication (SASL_SSL, AWS_MSK_IAM) on AWS.
+    description: Amazon MSK cluster of the FinTechBankX event platform (svc-evt-streaming) on AWS. TLS in transit,
+      SASL_SSL with mechanism AWS_MSK_IAM using the service's IRSA role (ADR-024, platform contract 2026-10-08).
     variables:
       bootstrapServers:
-        description: Bootstrap servers, injected per environment by the platform.
+        description: MSK IAM bootstrap brokers (port 9098), injected per environment by the platform.
     security:
     - $ref: '#/components/securitySchemes/mskIam'
+  local:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: Strimzi cluster in namespace kafka, for local and non-AWS environments only. Mutual TLS with
+      Strimzi-issued client certificates.
+    variables:
+      bootstrapServers:
+        description: Strimzi TLS bootstrap service, injected per environment.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
 channels:
   verificationCompleted:
     address: evt.of.payee.verification-completed.v1
@@ -74,75 +90,9 @@ operations:
 components:
   schemas:
     EventEnvelope:
-      type: object
-      description: >-
-        Standard envelope for every FinTechBankX domain event (catalog asyncapi/common/event-envelope.yaml).
-        Consumers must be idempotent on eventId and ignore unknown fields.
-      required:
-      - eventId
-      - eventType
-      - occurredAt
-      - aggregateId
-      - aggregateVersion
-      - correlationId
-      - causationId
-      - producer
-      - data
-      properties:
-        eventId:
-          type: string
-          format: uuid
-          description: Unique id of this event; the idempotency key for consumers.
-        eventType:
-          type: string
-          pattern: '^[A-Z][A-Za-z]*\.[A-Z][A-Za-z]*\.[A-Z][A-Za-z]*\.v[0-9]+$'
-        occurredAt:
-          type: string
-          format: date-time
-          description: UTC instant at which the decision was made.
-        aggregateId:
-          type: string
-          minLength: 1
-          description: Id of the aggregate that emitted the event. Also the Kafka record key.
-        aggregateVersion:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Decisions are insert-only, so this is always 0.
-        correlationId:
-          type: string
-          minLength: 1
-          description: The x-fapi-interaction-id of the request that produced the decision.
-        causationId:
-          type:
-          - string
-          - 'null'
-          description: Always null; a verification starts its flow.
-        producer:
-          type: string
-          pattern: '^svc-[a-z]+-[a-z0-9-]+$'
-        data:
-          type: object
+      $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
-      type: object
-      description: Kafka record headers. They duplicate envelope fields for routing and tracing.
-      required:
-      - eventType
-      - eventId
-      - correlationId
-      properties:
-        eventType:
-          type: string
-        eventId:
-          type: string
-          format: uuid
-        correlationId:
-          type: string
-        x-fapi-interaction-id:
-          type: string
-        traceparent:
-          type: string
-          description: W3C trace context of the request that recorded the decision, when traced.
+      $ref: ./common/event-envelope.yaml#/EventHeaders
     PayeeVerificationCompletedData:
       type: object
       description: Payload of OpenFinance.PayeeVerification.VerificationCompleted.v1. Ids and facts only.
@@ -233,7 +183,11 @@ components:
       x-source-class: com.enterprise.openfinance.payeeverification.domain.event.PayeeVerificationCompleted
   securitySchemes:
     mskIam:
-      type: scramSha512
-      description: >-
-        Placeholder for Amazon MSK IAM (SASL mechanism AWS_MSK_IAM, which AsyncAPI 3.0 has no scheme for).
-        Clients authenticate with their IRSA role; in-cluster Strimzi uses mutual TLS instead.
+      type: userPassword
+      description: SASL_SSL with SASL mechanism AWS_MSK_IAM. There is no user or password; the client signs with the
+        AWS credentials of its IRSA role, and a topic-scoped IAM policy (terraform module msk-client-access) grants
+        produce or consume rights. AsyncAPI has no IAM scheme type, so userPassword stands for the SASL family.
+      x-sasl-mechanism: AWS_MSK_IAM
+    mtls:
+      type: X509
+      description: Mutual TLS with Strimzi-issued client certificates (local and non-AWS clusters only).
