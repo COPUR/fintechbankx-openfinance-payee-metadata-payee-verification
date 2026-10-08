@@ -232,17 +232,6 @@ class PayeeVerificationControllerTest {
     }
 
     @Test
-    void missingInteractionIdIsRejected() throws Exception {
-        mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
-                .header("Authorization", "DPoP tpp-token")
-                .header("DPoP", dpop.proof("POST", URL, "tpp-token", Instant.now()))
-                .content(BODY))
-            .andExpect(status().isUnauthorized())
-            .andExpect(jsonPath("$.code").value("AUTH_HEADER_MISSING"))
-            .andExpect(jsonPath("$.interactionId").value("N/A"));
-    }
-
-    @Test
     void invalidBodiesAreBadRequests() throws Exception {
         tppCall("""
                 {"Data": {"SchemeName": "IBAN", "Name": "Al Tareq Trading LLC"}}
@@ -305,6 +294,56 @@ class PayeeVerificationControllerTest {
     void anythingOutsideTheApiIsDenied() throws Exception {
         mvc.perform(get("/internal/debug").header("Authorization", "Bearer service-token"))
             .andExpect(status().isForbidden());
+    }
+
+    /** Regression: missing or malformed client input is a 4xx with the error body, never the catch-all 500. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+        "",
+        "null",
+        "[]",
+        "{}",
+        "{\"Data\": null}",
+        "{\"Data\": {}}",
+        "{\"Data\": []}",
+        "{\"Data\": {\"Identification\": 12, \"SchemeName\": \"IBAN\", \"Name\": \"A\"}}",
+        "{\"Data\": {\"Identification\": {\"x\": 1}, \"SchemeName\": \"IBAN\", \"Name\": \"A\"}}",
+        "{\"Data\": {\"Identification\": \"AE280330000000123456789\", \"SchemeName\": \"IBAN\"}}",
+        "{\"Data\": {\"Identification\": \"AE280330000000123456789\", \"SchemeName\": \"\", \"Name\": \"A\"}}",
+        "{\"Data\": {\"Identification\": \"not-an-iban\", \"SchemeName\": \"IBAN\", \"Name\": \"A\"}}",
+        "{\"Data\": {\"Identification\": \"AE280330000000123456789\", \"SchemeName\": \"IBAN\", \"Name\": \"   \"}}",
+        "{\"Data\": {\"Identification\": \"AE280330000000123456789\", \"SchemeName\": \"IBAN\", \"Name\": \"A\"",
+    })
+    void malformedBodiesAreBadRequestsNotServerErrors(String body) throws Exception {
+        var response = tppCall(body, "ix-4xx").andReturn().getResponse();
+
+        assertThat(response.getStatus()).as("body %s -> %s", body, response.getContentAsString()).isEqualTo(400);
+        assertThat(response.getContentAsString()).contains("\"code\"").contains("\"interactionId\":\"ix-4xx\"");
+        verifyNoInteractions(useCase);
+    }
+
+    @Test
+    void missingInteractionIdIsABadRequestNotAnAuthFailure() throws Exception {
+        var response = mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "DPoP tpp-token")
+                .header("DPoP", dpop.proof("POST", URL, "tpp-token", Instant.now()))
+                .content(BODY))
+            .andReturn().getResponse();
+
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(response.getContentAsString()).contains("\"code\":\"INVALID_REQUEST\"")
+            .contains("Missing required header: X-FAPI-Interaction-ID").contains("\"interactionId\":\"N/A\"");
+        verifyNoInteractions(useCase);
+    }
+
+    @Test
+    void wrongContentTypeIsA415NotAServerError() throws Exception {
+        var response = mvc.perform(withProof(post(PATH), "POST", "ix-415")
+                .contentType(MediaType.TEXT_PLAIN).content(BODY))
+            .andReturn().getResponse();
+
+        assertThat(response.getStatus()).isEqualTo(415);
+        assertThat(response.getContentAsString()).contains("\"code\"");
     }
 
     private ResultActions tppCall(String body, String interactionId) throws Exception {

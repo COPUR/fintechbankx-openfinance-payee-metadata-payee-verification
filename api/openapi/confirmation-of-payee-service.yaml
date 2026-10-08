@@ -70,7 +70,9 @@ paths:
                       NameMatched: NoMatch
                       MatchedName: null
         '400':
-          description: Invalid request
+          description: >-
+            Invalid request: missing or blank X-FAPI-Interaction-ID, a body that is
+            not valid JSON for this operation, or missing or invalid fields.
           content:
             application/json:
               schema:

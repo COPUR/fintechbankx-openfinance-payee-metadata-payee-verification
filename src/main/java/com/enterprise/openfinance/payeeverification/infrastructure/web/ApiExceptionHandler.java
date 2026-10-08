@@ -31,9 +31,13 @@ class ApiExceptionHandler {
         return error(HttpStatus.UNAUTHORIZED, "AUTH_HEADER_MISSING", ex.getMessage(), request);
     }
 
+    /** A missing declared header is missing input (400); a missing Authorization is caught earlier as a 401. */
     @ExceptionHandler(MissingRequestHeaderException.class)
     ResponseEntity<ErrorResponse> handleMissingRequestHeader(MissingRequestHeaderException ex, HttpServletRequest request) {
-        return error(HttpStatus.UNAUTHORIZED, "AUTH_HEADER_MISSING", "Missing required header: " + ex.getHeaderName(), request);
+        if ("Authorization".equalsIgnoreCase(ex.getHeaderName())) {
+            return error(HttpStatus.UNAUTHORIZED, "AUTH_HEADER_MISSING", "Missing required header: Authorization", request);
+        }
+        return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Missing required header: " + ex.getHeaderName(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
