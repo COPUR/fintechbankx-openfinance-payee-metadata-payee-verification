@@ -116,7 +116,7 @@ spec:
             - name: METRICS_APP_TAG
               value: {{ .Values.serviceAccount.name | quote }}
             - name: METRICS_SQUAD_TAG
-              value: {{ .Release.Namespace | quote }}
+              value: {{ include "payee.namespace" . | quote }}
             - name: SPRING_PROFILES_ACTIVE
               value: {{ .Values.kafka.profile | quote }}
             {{- if eq .Values.kafka.profile "kafka-strimzi" }}

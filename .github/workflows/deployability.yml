@@ -88,6 +88,19 @@ jobs:
             echo "The chart must not weaken the mesh (platform contract)."
             exit 1
           fi
+      - name: Metrics squad tag is the namespace the chart deploys to
+        run: |
+          # The platform alerts route by squad = namespace; the tag must follow payee.namespace
+          # (values namespace, else the release namespace), as the Deployment's own namespace does.
+          chart=deploy/helm/payee-verification-service
+          for extra in "" "--set namespace=payments-squad" "--namespace from-release --set namespace="; do
+            rendered="$(helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES $extra --show-only templates/deployment.yaml)"
+            ns="$(echo "$rendered" | sed -n 's/^  namespace: *//p' | head -n 1)"
+            tag="$(echo "$rendered" | grep -A1 'name: METRICS_SQUAD_TAG' | sed -n 's/^ *value: *//p' | tr -d '"')"
+            if [ -z "$ns" ] || [ "$tag" != "$ns" ]; then
+              echo "METRICS_SQUAD_TAG ($tag) must equal the Deployment namespace ($ns) [$extra]"; exit 1
+            fi
+          done
 
   terraform:
     name: deploy/terraform
