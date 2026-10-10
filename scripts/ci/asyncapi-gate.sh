@@ -4,8 +4,8 @@
 #      top-level api/asyncapi/*.yaml|yml; shared fragments such as common/event-envelope.yaml are not specs.
 #   2. The catalog's breaking-change rules against BASE_REF (default origin/main), ASYNCAPI_DIR=api/asyncapi.
 #      scripts/ci/asyncapi-breaking.mjs and scripts/ci/lib/asyncapi-model.mjs are copied unchanged from
-#      fintechbankx-governance-api-contracts-asyncapi-catalog commit b0e31ee (branch
-#      claude/governance-alignment-5f4h5h; the ASYNCAPI_DIR version, child of e47c327). Do not edit them
+#      fintechbankx-governance-api-contracts-asyncapi-catalog commit 44837cc (branch
+#      claude/governance-alignment-5f4h5h; one topic per aggregate, ADR-019). Do not edit them
 #      here; refresh them from the catalog. A spec that is not on BASE_REF yet counts as new.
 # Needs node 22, git history with BASE_REF (actions/checkout fetch-depth: 0) and the yaml package 2.9.1,
 # installed below into ./node_modules when missing (not committed; see .gitignore).
