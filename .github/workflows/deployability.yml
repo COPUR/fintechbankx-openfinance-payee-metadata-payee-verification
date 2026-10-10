@@ -145,6 +145,23 @@ jobs:
           must_fail config.OTHER_URL --set "config.DB_URL=$good" --set "config.OTHER_URL=jdbc:postgresql://ci:5432/x?sslmode=disable"
           must_fail config.JAVA_TOOL_OPTIONS --set "config.DB_URL=$good" --set "config.JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=/tmp/t.jks"
           must_fail config.JAVA_TOOL_OPTIONS --set "config.DB_URL=$good" --set "config.JAVA_TOOL_OPTIONS=-Dspring.datasource.url=jdbc:postgresql://ci:5432/x"
+          # (e) parameter names are plain [A-Za-z0-9_.-] (no empty name), and no percent-encoded '=' or '&'
+          # anywhere in the query, values included (cicd-templates 13ca2c6 _helpers.tpl:175-177, 186-188)
+          for extra in '=x' 'App!Name=x' 'App Name=x' 'ApplicationName=a%26sslmode%3Ddisable' 'ApplicationName=a%3dsslmode'; do
+            must_fail config.DB_URL --set "config.DB_URL=$good&$extra"
+          done
+          # (f) Liquibase and R2DBC keys in any spelling, and any key naming a JDBC URL, an SSL factory
+          # or a host name verifier
+          for key in SPRING_LIQUIBASE_USER 'spring\.liquibase\.url' SPRING_R2DBC_URL 'spring\.r2dbc\.url' \
+                     MY_JDBC_URL APP_JDBCURL X_SSLFACTORY X_SSL_FACTORY APP_SSLHOSTNAMEVERIFIER; do
+            must_fail "config.${key//\\/}" --set "config.DB_URL=$good" --set "config.$key=x"
+          done
+          # (g) every JVM option variable, and datasource, Flyway, Liquibase or R2DBC system properties
+          for opt in '_JAVA_OPTIONS=-Dspring.datasource.hikari.data-source-properties.sslmode=disable' \
+                     'JAVA_TOOL_OPTIONS=-Dflyway.url=x' 'JDK_JAVA_OPTIONS=-Ddatasource.x=1' \
+                     'JAVA_TOOL_OPTIONS=-Dliquibase.x=1' 'JAVA_OPTS=-Dr2dbc.x=1'; do
+            must_fail "config.${opt%%=*}" --set "config.DB_URL=$good" --set "config.$opt"
+          done
           rm -f strict.err
           exit $failed
       - name: Chart refuses configuration imports and profile overrides in config and extraEnv
