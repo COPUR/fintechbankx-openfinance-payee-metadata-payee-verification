@@ -189,8 +189,8 @@ jobs:
         run: |
           # Aurora TLS is verified against the RDS CA bundle everywhere (sslmode=verify-full
           # sslrootcert=<rds-ca-dir>/global-bundle.pem); sslmode=require encrypts without
-          # checking the server. Workflows and tests name it only to refuse it.
-          if git grep -n "sslmode=require" -- . ':!.github' ':!src/test'; then
+          # checking the server. Workflows, tests and the vendored chart guard name it only to refuse it.
+          if git grep -n "sslmode=require" -- . ':!.github' ':!src/test' ':!deploy/helm/*/templates/_fbx_helpers.tpl'; then
             echo "Use sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem, not sslmode=require."
             exit 1
           fi
