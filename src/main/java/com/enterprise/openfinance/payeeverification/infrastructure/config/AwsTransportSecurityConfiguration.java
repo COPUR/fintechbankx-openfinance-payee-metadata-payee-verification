@@ -1,11 +1,16 @@
 package com.enterprise.openfinance.payeeverification.infrastructure.config;
 
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 
+import java.util.Map;
 
 /**
  * Under the aws profile (the chart renders SPRING_PROFILES_ACTIVE=aws,kafka-* for the
@@ -41,6 +46,33 @@ public class AwsTransportSecurityConfiguration {
     }
 
     static void check(Environment environment) {
-        // red skeleton: no check yet
+        Binder binder = Binder.get(environment);
+        String caBundle = binder.bind(CA_BUNDLE_PROPERTY, String.class).orElse(DEFAULT_CA_BUNDLE);
+        JdbcTlsUrlPolicy.requireVerifiedTls("spring.datasource.url",
+                binder.bind("spring.datasource.url", String.class).orElse(null), caBundle);
+        binder.bind("spring.flyway.url", String.class)
+                .ifBound(url -> JdbcTlsUrlPolicy.requireVerifiedTls("spring.flyway.url", url, caBundle));
+        JdbcTlsUrlPolicy.requireNoTlsDriverProperties("spring.datasource.hikari.data-source-properties",
+                binder.bind("spring.datasource.hikari.data-source-properties",
+                        Bindable.mapOf(String.class, String.class)).orElse(Map.of()));
+
+        boolean kafkaInUse = environment.acceptsProfiles(Profiles.of("kafka-msk | kafka-strimzi"))
+                || binder.bind("openfinance.outbox.relay.enabled", Boolean.class).orElse(false);
+        if (!kafkaInUse) {
+            return;
+        }
+        KafkaProperties kafka = binder.bind("spring.kafka", KafkaProperties.class).orElseGet(KafkaProperties::new);
+        String expected = environment.acceptsProfiles(Profiles.of("kafka-strimzi")) ? "SSL" : "SASL_SSL";
+        requireProtocol("producer", kafka.buildProducerProperties(null), expected);
+        requireProtocol("admin", kafka.buildAdminProperties(null), expected);
+    }
+
+    private static void requireProtocol(String client, Map<String, Object> properties, String expected) {
+        Object protocol = properties.get("security.protocol");
+        if (!expected.equals(protocol == null ? null : protocol.toString())) {
+            throw new IllegalStateException("Kafka " + client + " security.protocol must be " + expected
+                    + " under the aws profile, not " + protocol
+                    + " (spring.kafka.security.protocol, from the kafka-msk or kafka-strimzi profile)");
+        }
     }
 }

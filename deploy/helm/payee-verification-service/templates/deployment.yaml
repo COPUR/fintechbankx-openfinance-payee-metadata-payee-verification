@@ -85,6 +85,12 @@ spec:
               value: "false"
             - name: TRACING_ENABLED
               value: "false"
+            # Startup TLS assertion (AwsTransportSecurityConfiguration) on the owner connection;
+            # no Kafka profile: this container never connects to Kafka.
+            - name: SPRING_PROFILES_ACTIVE
+              value: aws
+            - name: DATABASE_CA_BUNDLE
+              value: {{ printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key | quote }}
             {{- if .Values.externalSecret.enabled }}
             - name: SPRING_DATASOURCE_PASSWORD
               valueFrom:
@@ -121,8 +127,12 @@ spec:
               value: {{ .Values.serviceAccount.name | quote }}
             - name: METRICS_SQUAD_TAG
               value: {{ include "payee.namespace" . | quote }}
+            # aws runs the startup TLS assertion: DB_URL verified against DATABASE_CA_BUNDLE,
+            # Kafka SASL_SSL (SSL with kafka-strimzi).
             - name: SPRING_PROFILES_ACTIVE
-              value: {{ .Values.kafka.profile | quote }}
+              value: {{ printf "aws,%s" .Values.kafka.profile | quote }}
+            - name: DATABASE_CA_BUNDLE
+              value: {{ printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key | quote }}
             {{- if eq .Values.kafka.profile "kafka-strimzi" }}
             - name: KAFKA_TLS_CERT
               valueFrom:

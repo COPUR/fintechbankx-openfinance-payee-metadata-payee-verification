@@ -45,7 +45,9 @@ podDisruptionBudget:
   minAvailable: 2
 
 kafka:
-  # Spring profile with the Kafka authentication: kafka-msk (AWS) or kafka-strimzi.
+  # Spring profile with the Kafka authentication: kafka-msk (AWS) or kafka-strimzi. The service
+  # container runs aws,<profile>; under aws it refuses to start unless Kafka is SASL_SSL (msk)
+  # or SSL (strimzi) and DB_URL verifies TLS. The migrate init container runs aws alone.
   profile: kafka-msk
   # Secret with user.crt, user.key and ca.crt when profile is kafka-strimzi.
   strimziTlsSecret: kafka-client-tls

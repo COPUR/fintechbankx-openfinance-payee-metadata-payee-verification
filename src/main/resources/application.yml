@@ -116,6 +116,12 @@ management:
       probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
 
 openfinance:
+  # Checked at startup under the aws profile (AwsTransportSecurityConfiguration): every
+  # JDBC URL carries exactly one sslmode=verify-full and exactly one sslrootcert equal to
+  # this path, and Kafka, when in use, is SASL_SSL (SSL with kafka-strimzi). The chart
+  # renders DATABASE_CA_BUNDLE from databaseCaBundle.mountPath/key.
+  transport-security:
+    database-ca-bundle: ${DATABASE_CA_BUNDLE:/etc/fintechbankx/rds-ca/global-bundle.pem}
   security:
     # Access tokens must carry this service id in aud (Keycloak audience mapper).
     audience: ${OIDC_AUDIENCE:svc-of-payee-verification}
