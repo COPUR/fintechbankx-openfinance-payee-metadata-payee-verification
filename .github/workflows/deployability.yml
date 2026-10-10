@@ -122,6 +122,42 @@ jobs:
               "volume rds-ca-bundle must project key global-bundle.pem of ConfigMap rds-ca-bundle"
           print("rds-ca-bundle mounted in both containers")
           PY
+      - name: Pods and every selector carry component=service
+        run: |
+          # Platform convention (cicd-templates 335a345): the serving pod carries
+          # app.kubernetes.io/component=service and every selector (Deployment, Service, PDB,
+          # topology spread, NetworkPolicy) includes it. Flyway runs as the migrate init
+          # container of this pod, so the chart has no db-migration Job.
+          helm template ci deploy/helm/payee-verification-service --set image.repository=ci/x --set image.tag=x $CI_VALUES \
+            --set networkPolicy.enabled=true --set "networkPolicy.databaseCidrs={10.0.0.0/24}" > rendered.yaml
+          python3 - rendered.yaml <<'PY'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          kinds = {d["kind"] for d in docs}
+          assert "Job" not in kinds, "no migration Job: Flyway runs as the migrate init container"
+          want = ("app.kubernetes.io/component", "service")
+          def sel(kind, name, labels):
+              assert labels and labels.get(want[0]) == want[1], f"{kind}/{name} selector must include {want[0]}={want[1]}: {labels}"
+          for d in docs:
+              k, n, spec = d["kind"], d["metadata"]["name"], d.get("spec") or {}
+              if k == "Deployment":
+                  sel(k, n, spec["selector"]["matchLabels"])
+                  pod = spec["template"]["metadata"]["labels"]
+                  assert pod.get(want[0]) == want[1], f"Deployment/{n} pod labels must include {want[0]}={want[1]}"
+                  spreads = spec["template"]["spec"].get("topologySpreadConstraints") or []
+                  assert spreads, "Deployment must declare topology spread constraints"
+                  for c in spreads:
+                      sel("topologySpreadConstraint", n, c["labelSelector"]["matchLabels"])
+              elif k == "Service":
+                  sel(k, n, spec["selector"])
+              elif k == "PodDisruptionBudget":
+                  sel(k, n, spec["selector"]["matchLabels"])
+              elif k == "NetworkPolicy":
+                  sel(k, n, spec["podSelector"]["matchLabels"])
+          for k in ("Deployment", "Service", "PodDisruptionBudget", "NetworkPolicy"):
+              assert k in kinds, f"rendered chart has no {k}"
+          print("component=service on the pod and on every selector")
+          PY
       - name: Metrics squad tag is the namespace the chart deploys to
         run: |
           # The platform alerts route by squad = namespace; the tag must follow payee.namespace
