@@ -174,6 +174,32 @@ jobs:
           done
           rm -f override.err
           exit $failed
+      - name: Pods run the aws profile with the mounted RDS CA bundle path (startup TLS assertion)
+        run: |
+          # AwsTransportSecurityConfiguration fails startup under the aws profile unless DB_URL
+          # verifies against DATABASE_CA_BUNDLE and Kafka, when in use, is SASL_SSL (SSL with
+          # kafka-strimzi). The migrate init container runs aws alone with the relay off.
+          chart=deploy/helm/payee-verification-service
+          for profile in kafka-msk kafka-strimzi; do
+            helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES --set kafka.profile=$profile > profile.yaml
+            python3 - profile.yaml "$profile" <<'PY'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+          bundle = "/etc/fintechbankx/rds-ca/global-bundle.pem"
+          for kind, container, profiles in (("migrate init container", pod["initContainers"][0], "aws"),
+                                            ("service container", pod["containers"][0], f"aws,{sys.argv[2]}")):
+              env = {e["name"]: e.get("value") for e in container.get("env", [])}
+              assert env.get("SPRING_PROFILES_ACTIVE") == profiles, \
+                  f"{kind}: SPRING_PROFILES_ACTIVE must be {profiles}, got {env.get('SPRING_PROFILES_ACTIVE')}"
+              assert env.get("DATABASE_CA_BUNDLE") == bundle, \
+                  f"{kind}: DATABASE_CA_BUNDLE must be {bundle}, got {env.get('DATABASE_CA_BUNDLE')}"
+          init_env = {e["name"]: e.get("value") for e in pod["initContainers"][0]["env"]}
+          assert init_env.get("OUTBOX_RELAY_ENABLED") == "false", "the migrate init container never runs the relay"
+          print(f"{sys.argv[2]}: init container aws, service container aws,{sys.argv[2]}; DATABASE_CA_BUNDLE set in both")
+          PY
+          done
+          rm -f profile.yaml
       - name: Migrate init container and service container mount the platform RDS CA bundle
         run: |
           # ConfigMap rds-ca-bundle, key global-bundle.pem, published by trust-manager (platform contract).
