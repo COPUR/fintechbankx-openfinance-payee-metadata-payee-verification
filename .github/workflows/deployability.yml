@@ -44,6 +44,28 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.3
+      - name: Vendored platform guard is unchanged (header sha256) and included once in the workload template
+        run: |
+          chart=deploy/helm/payee-verification-service
+          file="$chart/templates/_fbx_helpers.tpl"
+          # The header names source, commit, path and sha256; the sha256 covers everything after the
+          # first line that is exactly '*/}}' (the unchanged platform file).
+          want="$(sed -n 's/^sha256: *\([0-9a-f]\{64\}\)$/\1/p' "$file" | head -n 1)"
+          test -n "$want" || { echo "$file: no sha256 line in the header"; exit 1; }
+          grep -qx 'commit: a4f0072' "$file" || { echo "$file: header must name commit a4f0072"; exit 1; }
+          got="$(awk 'f {print} !f && $0 == "*/}}" {f=1}' "$file" | sha256sum | cut -d ' ' -f 1)"
+          if [ "$got" != "$want" ]; then
+            echo "$file: body sha256 $got, header records $want: re-copy the platform file unchanged"; exit 1
+          fi
+          # fbx.guard is included exactly once, in the workload template, before its first apiVersion:.
+          workload="$chart/templates/deployment.yaml"
+          n="$(grep -l 'include "fbx.guard"' "$chart"/templates/* | grep -cv '_fbx_helpers.tpl$' || true)"
+          [ "$n" = 1 ] || { echo "include \"fbx.guard\" must be in exactly one template (found $n)"; exit 1; }
+          [ "$(grep -c 'include "fbx.guard"' "$workload")" = 1 ] || { echo "$workload must include fbx.guard exactly once"; exit 1; }
+          guard="$(grep -n 'include "fbx.guard"' "$workload" | cut -d: -f1)"
+          api="$(grep -n '^apiVersion:' "$workload" | head -n 1 | cut -d: -f1)"
+          [ "$guard" -lt "$api" ] || { echo "$workload: fbx.guard must be included before the first apiVersion: (line $guard, apiVersion line $api)"; exit 1; }
+          echo "$file body sha256 $got; fbx.guard included once, line $guard of $workload"
       - name: Lint and render chart
         run: |
           chart=deploy/helm/payee-verification-service
@@ -101,7 +123,9 @@ jobs:
               echo "chart rendered with config.DB_URL=$url"
               exit 1
             fi
-            grep -q "sslmode=verify-full" tls.err
+            # The vendored guard (deployment.yaml) renders before configmap.yaml's strict parse, so the
+            # message names either the mode or the mounted bundle.
+            grep -qE "sslmode=verify-full|sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem exactly once" tls.err
           done
       - name: Chart parses config.DB_URL strictly and refuses datasource overrides elsewhere
         run: |
@@ -200,10 +224,10 @@ jobs:
             fi
           }
           for key in SPRING_CONFIG_IMPORT SPRING_CONFIG_LOCATION SPRING_CONFIG_ADDITIONAL_LOCATION 'spring\.config\.import'; do
-            must_fail "is refused" --set "config.$key=optional:configtree:/etc/fintechbankx/config/"
+            must_fail "is not allowed: a spring.config" --set "config.$key=optional:configtree:/etc/fintechbankx/config/"
           done
-          must_fail "is refused" --set 'config.SPRING_APPLICATION_JSON={"spring.config.import":"file:/tmp/x.yml"}'
-          must_fail "is refused" --set config.SPRING_PROFILES_ACTIVE=local
+          must_fail "config.SPRING_APPLICATION_JSON is not allowed" --set 'config.SPRING_APPLICATION_JSON={"spring.config.import":"file:/tmp/x.yml"}'
+          must_fail "config.SPRING_PROFILES_ACTIVE is not allowed: a profile" --set config.SPRING_PROFILES_ACTIVE=local
           for key in SPRING_CONFIG_IMPORT SPRING_CONFIG_LOCATION SPRING_CONFIG_ADDITIONAL_LOCATION; do
             must_fail "extraEnv" --set "extraEnv[0].name=$key" --set "extraEnv[0].value=optional:configtree:/etc/fintechbankx/config/"
           done
@@ -218,7 +242,16 @@ jobs:
                      spring.ssl.bundle.jks.x.truststore.location FBX_DEPLOYED fbx.deployed Fbx-Deployed; do
             v="$keys/$(printf 'config %s' "$key" | tr -c 'A-Za-z0-9._-' '_').yaml"
             printf 'config:\n  %s: x\n' "$key" > "$v"
-            must_fail "is refused" -f "$v"
+            # The vendored guard renders first and refuses most of these with its own text;
+            # spring.kafka.bootstrap-servers and FBX_DEPLOYED are this chart's own rules.
+            case "$key" in
+              SPRING_SSL_*|spring.ssl.*) expect="is not allowed: an SSL bundle property" ;;
+              SPRING_KAFKA_SECURITY_PROTOCOL) expect="must be SASL_SSL or SSL" ;;
+              *ENDPOINT_IDENTIFICATION_ALGORITHM) expect="must be https" ;;
+              *CONFIG*|*config*) expect="is not allowed: a spring.config" ;;
+              *) expect="is refused" ;;
+            esac
+            must_fail "$expect" -f "$v"
             v="$keys/$(printf 'extraEnv %s' "$key" | tr -c 'A-Za-z0-9._-' '_').yaml"
             printf 'extraEnv:\n  - name: %s\n    value: x\n' "$key" > "$v"
             must_fail "extraEnv" -f "$v"
@@ -230,6 +263,90 @@ jobs:
           done
           rm -rf "$keys"
           rm -f override.err
+          exit $failed
+      - name: Vendored guard refuses on every adapter route, and interpolated keys and values stay in place
+        run: |
+          # README "Vendoring the guard" steps 2-4 (cicd-templates a4f0072): the adapter in
+          # deployment.yaml maps config, extraEnv (plus the env values the templates interpolate),
+          # envFrom, extraEnvFrom, databaseCa, kafka.runtime and the rendered ExternalSecrets; each
+          # case keeps the guard's message so it cannot pass because the render failed for another reason.
+          chart=deploy/helm/payee-verification-service
+          base="--set image.repository=ci/x --set image.tag=x $CI_VALUES"
+          failed=0
+          must_fail() {  # <expected text in the error> <helm args...>
+            local expect="$1"; shift
+            if helm template ci "$chart" $base "$@" > /dev/null 2> guard.err; then
+              echo "chart rendered with: $*"; failed=1
+            elif ! grep -q -- "$expect" guard.err; then
+              echo "render failed for another reason than '$expect' with: $*"; cat guard.err; failed=1
+            fi
+          }
+          work="$(mktemp -d)"
+          # Template interpolation: a key with a newline would open further keys the checks never see.
+          printf 'config:\n  "X\\nSPRING_CONFIG_IMPORT": "optional:file:/tmp/x.yml"\n' > "$work/config-key-newline.yaml"
+          must_fail 'is not a ConfigMap key' -f "$work/config-key-newline.yaml"
+          printf 'config:\n  "X: y\\n  SPRING_DATASOURCE_URL": "x"\n' > "$work/config-key-colon.yaml"
+          must_fail 'is not a ConfigMap key' -f "$work/config-key-colon.yaml"
+          # The ExternalSecret remote keys come from values (--set-file outranks --set).
+          printf 'ci/db-app\n  property: x' > "$work/remote-key"
+          must_fail 'must not contain a control character' --set-file "externalSecret.remoteSecretName=$work/remote-key"
+          must_fail 'must not contain a control character' --set-file "externalSecret.migrationRemoteSecretName=$work/remote-key"
+          # '$(' in an env value the templates interpolate (Kubernetes would expand it).
+          must_fail "extraEnv.DB_USERNAME must not contain '\$('" --set-string 'migration.username=$(SPRING_DATASOURCE_PASSWORD)'
+          must_fail "extraEnv.METRICS_APP_TAG must not contain '\$('" --set-string 'serviceAccount.name=$(DB_URL)'
+          must_fail "extraEnv.METRICS_SQUAD_TAG must not contain '\$('" --set-string 'namespace=$(DB_URL)'
+          must_fail "config.DB_URL must not contain" --set-string 'config.DB_URL=jdbc:postgresql://ci:5432/x?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem&ApplicationName=$(X)'
+          # Routes the chart does not render are refused rather than ignored.
+          must_fail 'envFrom is not supported' --set 'envFrom[0].configMapRef.name=x'
+          must_fail 'extraEnvFrom is not supported' --set 'extraEnvFrom[0].secretRef.name=x'
+          must_fail 'externalSecret.dataFrom is not supported' --set 'externalSecret.dataFrom[0].extract.key=x'
+          must_fail 'javaToolOptions is not supported' --set-string 'javaToolOptions=-XX:MaxRAMPercentage=70'
+          must_fail 'externalSecret.data is not supported' --set 'externalSecret.data[0].secretKey=X'
+          must_fail 'externalSecret.extraData is not supported' --set 'externalSecret.extraData[0].secretKey=X'
+          # The Kafka profile is one of two; Kafka TLS on config keys the local rules let through.
+          must_fail 'kafka.profile must be kafka-msk or kafka-strimzi' --set kafka.profile=local
+          must_fail 'kafka.profile must be kafka-msk or kafka-strimzi' --set-string 'kafka.profile=kafka-msk\,local'
+          must_fail 'config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL or SSL' --set config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+          must_fail 'must be SASL_SSL with kafka.runtime msk' --set config.KAFKA_SECURITY_PROTOCOL=SSL
+          must_fail 'must be SSL with kafka.runtime strimzi' --set kafka.profile=kafka-strimzi --set config.KAFKA_SECURITY_PROTOCOL=SASL_SSL
+          must_fail 'config.X_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https' --set-string config.X_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
+          # Must pass: quoted values with a newline stay one value; no key or container field is added.
+          helm template ci "$chart" $base > "$work/baseline.yaml"
+          cat > "$work/hostile.yaml" <<'VALUES'
+          image:
+            tag: "x\"\n          args: [\"--spring.config.import=file:/tmp/x.yml\"]"
+          config:
+            OIDC_AUDIENCE: "aud\nSPRING_CONFIG_IMPORT: file:/tmp/x.yml"
+          databaseCaBundle:
+            configMapName: "rds-ca-bundle\n  optional: true"
+          VALUES
+          # --set outranks -f, so the hostile render takes image.tag from the file only.
+          helm template ci "$chart" ${base/--set image.tag=x/} -f "$work/hostile.yaml" > "$work/hostile-out.yaml"
+          python3 - "$work/baseline.yaml" "$work/hostile-out.yaml" <<'PY'
+          import sys, yaml
+          def load(p):
+              return {(d["kind"], d["metadata"]["name"]): d for d in yaml.safe_load_all(open(p)) if d}
+          base, bad = load(sys.argv[1]), load(sys.argv[2])
+          assert base.keys() == bad.keys(), "a hostile value added or removed a document"
+          for key, d in base.items():
+              if key[0] not in ("Deployment", "Job", "CronJob"):
+                  continue
+              spec = d["spec"]["template"]["spec"]
+              other = bad[key]["spec"]["template"]["spec"]
+              assert spec.keys() == other.keys(), f"{key}: pod spec fields changed"
+              for c, o in zip(spec.get("initContainers", []) + spec["containers"], other.get("initContainers", []) + other["containers"]):
+                  assert c.keys() == o.keys(), f"{key}: container fields changed: {sorted(set(o) ^ set(c))}"
+                  assert [e["name"] for e in c.get("env", [])] == [e["name"] for e in o.get("env", [])], f"{key}: env names changed"
+                  assert o["image"].startswith("ci/x:x\"\n"), f"{key}: image tag not kept as one value"
+              vols = {v["name"]: v for v in other["volumes"]}
+              assert vols["rds-ca-bundle"]["configMap"].keys() == {"name", "items"}, f"{key}: configMap volume fields changed"
+          cm = next(d for (k, _), d in bad.items() if k == "ConfigMap")
+          cm0 = next(d for (k, _), d in base.items() if k == "ConfigMap")
+          assert cm["data"].keys() == cm0["data"].keys(), "ConfigMap keys changed"
+          assert cm["data"]["OIDC_AUDIENCE"] == "aud\nSPRING_CONFIG_IMPORT: file:/tmp/x.yml", "config value not kept as one value"
+          print("hostile values stay single quoted values: no added keys, env entries or container fields")
+          PY
+          rm -rf "$work" guard.err
           exit $failed
       - name: Pods run the aws profile with the mounted RDS CA bundle path (startup TLS assertion)
         run: |
@@ -300,11 +417,11 @@ jobs:
           init, main = pod.split("      containers:\n", 1)
           init = init.split("      initContainers:\n", 1)[1]
           main, volumes = main.split("      volumes:\n", 1)
-          mount = "- name: rds-ca-bundle\n              mountPath: /etc/fintechbankx/rds-ca\n              readOnly: true"
+          mount = "- name: rds-ca-bundle\n              mountPath: \"/etc/fintechbankx/rds-ca\"\n              readOnly: true"
           for name, part in (("migrate init container", init), ("service container", main)):
               assert mount in part, f"{name} does not mount rds-ca-bundle read-only at /etc/fintechbankx/rds-ca"
-          assert ("- name: rds-ca-bundle\n          configMap:\n            name: rds-ca-bundle\n"
-                  "            items:\n              - key: global-bundle.pem\n                path: global-bundle.pem") in volumes, \
+          assert ("- name: rds-ca-bundle\n          configMap:\n            name: \"rds-ca-bundle\"\n"
+                  "            items:\n              - key: \"global-bundle.pem\"\n                path: \"global-bundle.pem\"") in volumes, \
               "volume rds-ca-bundle must project key global-bundle.pem of ConfigMap rds-ca-bundle"
           print("rds-ca-bundle mounted in both containers")
           PY

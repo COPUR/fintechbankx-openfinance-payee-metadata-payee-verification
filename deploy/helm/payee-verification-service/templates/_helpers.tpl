@@ -21,7 +21,7 @@ app.kubernetes.io/component: service
 app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
 app.kubernetes.io/part-of: fintechbankx-open-finance
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-fintechbankx.io/service-id: {{ .Values.serviceId }}
+fintechbankx.io/service-id: {{ .Values.serviceId | quote }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
 
@@ -56,9 +56,10 @@ so the driver can only use the TLS settings checked here:
 - no other ssl* key (sslfactory, sslfactoryarg, sslhostnameverifier,
   sslpasswordcallback, sslcert, ...) and no service: they can switch verification
   off or redirect the connection;
-- TLS keys in lower case only; parameter names plain [A-Za-z0-9_.-] (not empty, so no
-  percent-encoding either), and no %3D or %26 (any case) anywhere in the query, values
-  included (13ca2c6 _helpers.tpl:175-177, 186-188).
+- TLS keys in lower case only.
+Plain [A-Za-z0-9_.-] parameter names and no %3D or %26 anywhere in the query are checked
+identically by the vendored platform guard (_fbx_helpers.tpl, fbx.validateJdbcUrl), which
+deployment.yaml runs on every config value; this parse no longer repeats them.
 Arguments: dict "key" (config key), "url", "root" (expected sslrootcert path).
 */}}
 {{- define "payee.strictJdbcUrl" -}}
@@ -73,9 +74,6 @@ Arguments: dict "key" (config key), "url", "root" (expected sslrootcert path).
 {{- if regexMatch "[=&;%]" (index (splitList "?" $url) 0) -}}
 {{- fail (printf "%s: no parameter may come before the '?'" $hint) -}}
 {{- end -}}
-{{- if regexMatch "(?i)%(3d|26)" (index (splitList "?" $url) 1) -}}
-{{- fail (printf "%s: no percent-encoded '=' or '&' (%%3D, %%26) in the query" $hint) -}}
-{{- end -}}
 {{- $modes := 0 -}}
 {{- $roots := 0 -}}
 {{- range $pair := splitList "&" (index (splitList "?" $url) 1) -}}
@@ -84,9 +82,6 @@ Arguments: dict "key" (config key), "url", "root" (expected sslrootcert path).
 {{- end -}}
 {{- $name := first (splitList "=" $pair) -}}
 {{- $value := trimPrefix (printf "%s=" $name) $pair -}}
-{{- if not (regexMatch "^[A-Za-z0-9_.-]+$" $name) -}}
-{{- fail (printf "%s: parameter name %q is not plain [A-Za-z0-9_.-] (empty and percent-encoded names are refused)" $hint $name) -}}
-{{- end -}}
 {{- if or (hasPrefix "ssl" (lower $name)) (eq (lower $name) "service") -}}
 {{- if ne $name (lower $name) -}}
 {{- fail (printf "%s: TLS keys are lower case only (%s)" $hint $name) -}}
@@ -159,10 +154,11 @@ No configuration import or profile override from values (round 5):
   Any suffix is refused too (SPRING_CONFIG_IMPORT_0, spring.config.import[0],
   SPRING_CONFIG_NAME): (?i)^spring[._-]?config[._-]?(import|location|
   additional[._-]?location|name), as cicd-templates 2caa48f fbx.datasourceOverrideName.
-- config.* must not set spring.kafka.* or spring.ssl.* in any spelling
-  ((?i)^spring[._-]?(kafka|ssl)[._-]): the Kafka security protocol, its trust store or
-  host name check come from the kafka-* profile, and an SSL bundle could replace the
-  trust anchors.
+- config.* must not set spring.kafka.* in any spelling ((?i)^spring[._-]?kafka[._-]):
+  the Kafka security protocol, its trust store or host name check come from the kafka-*
+  profile. spring.ssl.* (an SSL bundle could replace the trust anchors) is refused by the
+  vendored guard ((?i)^spring[._-]?ssl([._-]|$) and any ssl[._-]?bundle name, a superset
+  of the rule this chart had).
 - config.* must not set the deployment marker FBX_DEPLOYED in any spelling (name
   normalising to FBXDEPLOYED): the chart renders FBX_DEPLOYED=true on every container
   that runs the startup TLS assertion, never from values.
@@ -179,8 +175,8 @@ Arguments: dict "config" (.Values.config), "extraEnv" (.Values.extraEnv).
 {{- if regexMatch "(?i)^spring[._-]?config[._-]?(import|location|additional[._-]?location|name)" $key -}}
 {{- fail (printf "config.%s is refused: a config import, location or name can load a file or config tree that overrides the datasource past the sslmode=verify-full check; the chart renders no config import" $key) -}}
 {{- end -}}
-{{- if regexMatch "(?i)^spring[._-]?(kafka|ssl)[._-]" $key -}}
-{{- fail (printf "config.%s is refused: spring.kafka.* and spring.ssl.* come from application.yml and the kafka-* profile (they set the Kafka security protocol and trust, and an SSL bundle could replace the trust anchors)" $key) -}}
+{{- if regexMatch "(?i)^spring[._-]?kafka[._-]" $key -}}
+{{- fail (printf "config.%s is refused: spring.kafka.* comes from application.yml and the kafka-* profile (it sets the Kafka security protocol and trust)" $key) -}}
 {{- end -}}
 {{- if eq (upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "")) "FBXDEPLOYED" -}}
 {{- fail (printf "config.%s is refused: FBX_DEPLOYED is the chart-owned deployment marker that enforces the startup TLS assertion; values never set it" $key) -}}
@@ -192,5 +188,48 @@ Arguments: dict "config" (.Values.config), "extraEnv" (.Values.extraEnv).
 {{- $names = append $names (toString (get $entry "name")) -}}
 {{- end -}}
 {{- fail (printf "extraEnv is refused (%s): this chart renders no extraEnv; non-secret settings go in config.*, which is checked, and SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION and SPRING_CONFIG_ADDITIONAL_LOCATION are never accepted" (join ", " $names)) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+ExternalSecret entries exactly as <template> renders them, in the shape fbx.guard reads
+(secretKey, property, remoteSecretName), plus any dataFrom: the adapter in deployment.yaml
+passes what the chart writes, so a secretKey or remote key added to a template is checked
+without a second list to keep in step. A document that does not parse fails the render.
+Arguments: dict "root" (.), "template" (file name under templates/). Returns YAML
+{data: [...], dataFrom: [...]}.
+*/}}
+{{- define "payee.renderedSecretData" -}}
+{{- $data := list -}}
+{{- $dataFrom := list -}}
+{{- range $doc := splitList "\n---" (include (print .root.Template.BasePath "/" .template) .root) -}}
+{{- if regexMatch "(?m)^[^#\\s]" $doc -}}
+{{- $o := fromYaml $doc -}}
+{{- if hasKey $o "Error" -}}
+{{- fail (printf "%s does not render as YAML: %s" $.template $o.Error) -}}
+{{- end -}}
+{{- if eq (toString $o.kind) "ExternalSecret" -}}
+{{- $spec := $o.spec | default dict -}}
+{{- range $e := ($spec.data | default list) -}}
+{{- $ref := $e.remoteRef | default dict -}}
+{{- $data = append $data (dict "secretKey" $e.secretKey "property" $ref.property "remoteSecretName" $ref.key) -}}
+{{- end -}}
+{{- $dataFrom = concat $dataFrom ($spec.dataFrom | default list) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml (dict "data" $data "dataFrom" $dataFrom) -}}
+{{- end -}}
+
+{{/*
+kafka.runtime for the vendored guard and fbx.kafkaProfile: kafka.profile names the Spring
+profile (kafka-msk or kafka-strimzi); anything else fails the render, so the service
+container's SPRING_PROFILES_ACTIVE is always aws plus one of the two Kafka profiles.
+*/}}
+{{- define "payee.kafkaRuntime" -}}
+{{- $p := toString .Values.kafka.profile -}}
+{{- if eq $p "kafka-msk" -}}msk
+{{- else if eq $p "kafka-strimzi" -}}strimzi
+{{- else -}}{{- fail (printf "kafka.profile must be kafka-msk or kafka-strimzi (got %q)" $p) -}}
 {{- end -}}
 {{- end -}}

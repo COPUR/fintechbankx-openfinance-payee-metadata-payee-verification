@@ -29,7 +29,7 @@ data:
   {{- range $key, $value := $c }}
   {{- if not (kindIs "invalid" $value) }}
   {{- if ne (toString $value) "" }}
-  {{ $key }}: {{ $value | quote }}
+  {{ $key | quote }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
   {{- end }}

@@ -1,3 +1,52 @@
+{{- /*
+Platform datasource/TLS guard, vendored unchanged as _fbx_helpers.tpl (source, commit, path and sha256 in
+its header; platform chart README, "Vendoring the guard"). The adapter maps every
+value of this chart that feeds one of the guard's routes; a key left out is never checked:
+- config: .Values.config (ConfigMap, envFrom of the migrate init container and the service).
+- extraEnv: .Values.extraEnv (refused whole by payee.refuseConfigOverrides, the chart renders
+  none) plus every env value the templates interpolate from values, so the guard refuses '$('
+  in them (Kubernetes expands $(VAR) in env[].value). SPRING_PROFILES_ACTIVE (aws, plus the
+  Kafka profile from fbx.kafkaProfile on the service container) and FBX_DEPLOYED are
+  chart-rendered and not passed: the guard refuses every spring.profiles.* name it is given.
+- envFrom, extraEnvFrom: no such values; mapped so that a value set there (which no template
+  renders) is refused rather than ignored.
+- javaToolOptions: the chart has no such value and renders none; a value set there is refused
+  below. JVM options can only come from config.*, where the guard checks JAVA_TOOL_OPTIONS,
+  JDK_JAVA_OPTIONS and _JAVA_OPTIONS.
+- externalSecret.data / extraData as values: the chart renders its own entries only; a value
+  set there is refused below rather than ignored.
+- databaseCa: databaseCaBundle, always mounted (enabled), so every JDBC URL must carry
+  sslrootcert=<mountPath>/<key>.
+- kafka.runtime: kafka.profile kafka-msk -> msk, kafka-strimzi -> strimzi (payee.kafkaRuntime,
+  which refuses any other profile).
+- externalSecret: data = the entries externalsecret.yaml renders (db and db-migration),
+  dataFrom = any dataFrom it renders plus .Values.externalSecret.dataFrom (refused).
+*/ -}}
+{{- $runtime := include "payee.kafkaRuntime" . -}}
+{{- $env := list
+      (dict "name" "DB_USERNAME" "value" (toString .Values.migration.username))
+      (dict "name" "METRICS_APP_TAG" "value" (toString .Values.serviceAccount.name))
+      (dict "name" "METRICS_SQUAD_TAG" "value" (include "payee.namespace" .))
+      (dict "name" "DATABASE_CA_BUNDLE" "value" (printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key)) -}}
+{{- $secrets := fromYaml (include "payee.renderedSecretData" (dict "root" . "template" "externalsecret.yaml")) -}}
+{{- if .Values.javaToolOptions -}}
+{{- fail "javaToolOptions is not supported by this chart (it renders no JAVA_TOOL_OPTIONS of its own); set config.JAVA_TOOL_OPTIONS, which the guard checks" -}}
+{{- end -}}
+{{- range $k := list "data" "extraData" -}}
+{{- if index ($.Values.externalSecret | default dict) $k -}}
+{{- fail (printf "externalSecret.%s is not supported by this chart: it renders its own ExternalSecret entries (templates/externalsecret.yaml), which the guard checks" $k) -}}
+{{- end -}}
+{{- end -}}
+{{- include "fbx.guard" (dict "Values" (dict
+      "config" .Values.config
+      "extraEnv" (concat (.Values.extraEnv | default list) $env)
+      "envFrom" .Values.envFrom
+      "extraEnvFrom" .Values.extraEnvFrom
+      "javaToolOptions" ""
+      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCaBundle.mountPath "key" .Values.databaseCaBundle.key)
+      "kafka" (dict "runtime" $runtime)
+      "externalSecret" (dict "enabled" true "data" ($secrets.data | default list)
+        "dataFrom" (concat ($secrets.dataFrom | default list) (.Values.externalSecret.dataFrom | default list))))) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +56,7 @@ metadata:
     {{- include "payee.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount | int }}
   {{- end }}
   revisionHistoryLimit: 5
   strategy:
@@ -24,7 +73,7 @@ spec:
         {{- include "payee.selectorLabels" . | nindent 8 }}
         app: {{ include "payee.name" . }}
         version: {{ .Values.image.tag | quote }}
-        fintechbankx.io/service-id: {{ .Values.serviceId }}
+        fintechbankx.io/service-id: {{ .Values.serviceId | quote }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -34,19 +83,19 @@ spec:
         # rotation (runbook) rolls the pods onto the new password.
         checksum/secret: {{ include (print $.Template.BasePath "/externalsecret.yaml") . | sha256sum }}
         prometheus.io/scrape: "true"
-        prometheus.io/port: {{ .Values.service.managementPort | quote }}
+        prometheus.io/port: {{ .Values.service.managementPort | toString | quote }}
         prometheus.io/path: /actuator/prometheus
         # 5432: the migrate init container runs before the Istio sidecar exists; Aurora is
         # outside the mesh and reached with TLS verified against the mounted RDS CA bundle
         # (sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem).
-        {{- if eq .Values.kafka.profile "kafka-strimzi" }}
+        {{- if eq $runtime "strimzi" }}
         # 9093: Strimzi uses its own mutual TLS; the sidecar must not wrap it.
         traffic.sidecar.istio.io/excludeOutboundPorts: "5432,9093"
         {{- else }}
         traffic.sidecar.istio.io/excludeOutboundPorts: "5432"
         {{- end }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name | quote }}
       terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
@@ -56,13 +105,13 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               {{- include "payee.selectorLabels" . | nindent 14 }}
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
@@ -72,8 +121,8 @@ spec:
         # Flyway with the schema owner's credential (secret db-migration); exits when the
         # schema is current. The service container below never holds this credential.
         - name: migrate
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           args: ["--spring.main.web-application-type=none"]
           envFrom:
             - configMapRef:
@@ -111,17 +160,17 @@ spec:
             - name: tmp
               mountPath: /tmp
             - name: rds-ca-bundle
-              mountPath: {{ .Values.databaseCaBundle.mountPath }}
+              mountPath: {{ .Values.databaseCaBundle.mountPath | quote }}
               readOnly: true
       containers:
         - name: payee-verification-service
-          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           ports:
             - name: http
-              containerPort: {{ .Values.service.port }}
+              containerPort: {{ .Values.service.port | int }}
             - name: management
-              containerPort: {{ .Values.service.managementPort }}
+              containerPort: {{ .Values.service.managementPort | int }}
           env:
             # Migrations ran in the init container; the runtime role owns nothing.
             - name: SPRING_FLYWAY_ENABLED
@@ -135,7 +184,7 @@ spec:
             # aws runs the startup TLS assertion: DB_URL verified against DATABASE_CA_BUNDLE,
             # Kafka SASL_SSL or SSL (never PLAINTEXT).
             - name: SPRING_PROFILES_ACTIVE
-              value: {{ printf "aws,%s" .Values.kafka.profile | quote }}
+              value: {{ printf "aws,%s" (include "fbx.kafkaProfile" (dict "Values" (dict "kafka" (dict "runtime" $runtime)))) | quote }}
             - name: DATABASE_CA_BUNDLE
               value: {{ printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key | quote }}
             # Chart-owned deployment marker (never from values; config.FBX_DEPLOYED is refused):
@@ -143,21 +192,21 @@ spec:
             # to start without the aws profile (and kafka-msk or kafka-strimzi when the outbox relay is on) or with a local profile.
             - name: FBX_DEPLOYED
               value: "true"
-            {{- if eq .Values.kafka.profile "kafka-strimzi" }}
+            {{- if eq $runtime "strimzi" }}
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafka.strimziTlsSecret }}
+                  name: {{ .Values.kafka.strimziTlsSecret | quote }}
                   key: user.crt
             - name: KAFKA_TLS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafka.strimziTlsSecret }}
+                  name: {{ .Values.kafka.strimziTlsSecret | quote }}
                   key: user.key
             - name: KAFKA_TLS_CA
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafka.strimziTlsSecret }}
+                  name: {{ .Values.kafka.strimziTlsSecret | quote }}
                   key: ca.crt
             {{- end }}
           envFrom:
@@ -197,7 +246,7 @@ spec:
             - name: tmp
               mountPath: /tmp
             - name: rds-ca-bundle
-              mountPath: {{ .Values.databaseCaBundle.mountPath }}
+              mountPath: {{ .Values.databaseCaBundle.mountPath | quote }}
               readOnly: true
       volumes:
         - name: tmp
@@ -205,7 +254,7 @@ spec:
         # Platform trust-manager bundle; JDBC verifies Aurora's certificate with it.
         - name: rds-ca-bundle
           configMap:
-            name: {{ .Values.databaseCaBundle.configMapName }}
+            name: {{ .Values.databaseCaBundle.configMapName | quote }}
             items:
-              - key: {{ .Values.databaseCaBundle.key }}
-                path: {{ .Values.databaseCaBundle.key }}
+              - key: {{ .Values.databaseCaBundle.key | quote }}
+                path: {{ .Values.databaseCaBundle.key | quote }}
