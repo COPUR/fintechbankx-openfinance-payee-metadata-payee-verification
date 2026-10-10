@@ -37,7 +37,8 @@ spec:
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
         prometheus.io/path: /actuator/prometheus
         # 5432: the migrate init container runs before the Istio sidecar exists; Aurora is
-        # outside the mesh and reached with TLS (sslmode=require).
+        # outside the mesh and reached with TLS verified against the mounted RDS CA bundle
+        # (sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem).
         {{- if eq .Values.kafka.profile "kafka-strimzi" }}
         # 9093: Strimzi uses its own mutual TLS; the sidecar must not wrap it.
         traffic.sidecar.istio.io/excludeOutboundPorts: "5432,9093"

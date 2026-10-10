@@ -2,7 +2,7 @@
 -- the RDS-managed admin credential (Terraform output master_user_secret_arn)
 -- while connected to db_of_payee_verification_<env>:
 --
---   psql "host=<writer> dbname=db_of_payee_verification_<env> user=<admin> sslmode=require" \
+--   psql "host=<writer> dbname=db_of_payee_verification_<env> user=<admin> sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem" \
 --        -v ON_ERROR_STOP=1 -f db/bootstrap/bootstrap-roles.sql
 --
 -- Creates four LOGIN roles without passwords; the DBA then sets each password
