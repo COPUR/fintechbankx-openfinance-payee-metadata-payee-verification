@@ -177,8 +177,8 @@ jobs:
       - name: Pods run the aws profile with the mounted RDS CA bundle path (startup TLS assertion)
         run: |
           # AwsTransportSecurityConfiguration fails startup under the aws profile unless DB_URL
-          # verifies against DATABASE_CA_BUNDLE and Kafka, when in use, is SASL_SSL (SSL with
-          # kafka-strimzi). The migrate init container runs aws alone with the relay off.
+          # verifies against DATABASE_CA_BUNDLE and Kafka, when in use, is SASL_SSL or SSL (never
+          # PLAINTEXT). The migrate init container runs aws alone with the relay off.
           chart=deploy/helm/payee-verification-service
           for profile in kafka-msk kafka-strimzi; do
             helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES --set kafka.profile=$profile > profile.yaml

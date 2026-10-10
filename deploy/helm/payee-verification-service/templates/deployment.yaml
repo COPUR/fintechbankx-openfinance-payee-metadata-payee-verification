@@ -128,7 +128,7 @@ spec:
             - name: METRICS_SQUAD_TAG
               value: {{ include "payee.namespace" . | quote }}
             # aws runs the startup TLS assertion: DB_URL verified against DATABASE_CA_BUNDLE,
-            # Kafka SASL_SSL (SSL with kafka-strimzi).
+            # Kafka SASL_SSL or SSL (never PLAINTEXT).
             - name: SPRING_PROFILES_ACTIVE
               value: {{ printf "aws,%s" .Values.kafka.profile | quote }}
             - name: DATABASE_CA_BUNDLE

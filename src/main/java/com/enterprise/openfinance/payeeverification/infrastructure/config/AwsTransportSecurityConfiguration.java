@@ -11,6 +11,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Under the aws profile (the chart renders SPRING_PROFILES_ACTIVE=aws,kafka-* for the
@@ -23,8 +24,9 @@ import java.util.Map;
  *       Hikari data-source property touches TLS;</li>
  *   <li>whenever Kafka is in use (a kafka-msk or kafka-strimzi profile is active, or the
  *       outbox relay is enabled), the Kafka producer and admin clients use
- *       security.protocol SASL_SSL (MSK IAM), or SSL with the kafka-strimzi profile
- *       (mutual TLS with the KafkaUser certificate). The migrate init container runs
+ *       security.protocol SASL_SSL (MSK IAM) or SSL (Strimzi mutual TLS with the KafkaUser
+ *       certificate), whatever the Kafka profile; PLAINTEXT, SASL_PLAINTEXT and an unset
+ *       protocol are refused. The migrate init container runs
  *       with the aws profile alone and the relay off: it never connects to Kafka, so
  *       only its database connection is checked.</li>
  * </ul>
@@ -39,6 +41,9 @@ public class AwsTransportSecurityConfiguration {
     static final String AWS_PROFILE = "aws";
     static final String CA_BUNDLE_PROPERTY = "openfinance.transport-security.database-ca-bundle";
     static final String DEFAULT_CA_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
+
+    /** SASL_SSL: MSK with IAM. SSL: Strimzi mutual TLS. Anything else sends records in clear text. */
+    static final Set<String> TLS_PROTOCOLS = Set.of("SASL_SSL", "SSL");
 
     @Bean
     static BeanFactoryPostProcessor awsTransportSecurityAssertion(Environment environment) {
@@ -62,15 +67,14 @@ public class AwsTransportSecurityConfiguration {
             return;
         }
         KafkaProperties kafka = binder.bind("spring.kafka", KafkaProperties.class).orElseGet(KafkaProperties::new);
-        String expected = environment.acceptsProfiles(Profiles.of("kafka-strimzi")) ? "SSL" : "SASL_SSL";
-        requireProtocol("producer", kafka.buildProducerProperties(null), expected);
-        requireProtocol("admin", kafka.buildAdminProperties(null), expected);
+        requireProtocol("producer", kafka.buildProducerProperties(null));
+        requireProtocol("admin", kafka.buildAdminProperties(null));
     }
 
-    private static void requireProtocol(String client, Map<String, Object> properties, String expected) {
+    private static void requireProtocol(String client, Map<String, Object> properties) {
         Object protocol = properties.get("security.protocol");
-        if (!expected.equals(protocol == null ? null : protocol.toString())) {
-            throw new IllegalStateException("Kafka " + client + " security.protocol must be " + expected
+        if (protocol == null || !TLS_PROTOCOLS.contains(protocol.toString())) {
+            throw new IllegalStateException("Kafka " + client + " security.protocol must be SASL_SSL or SSL"
                     + " under the aws profile, not " + protocol
                     + " (spring.kafka.security.protocol, from the kafka-msk or kafka-strimzi profile)");
         }
