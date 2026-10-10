@@ -56,7 +56,9 @@ so the driver can only use the TLS settings checked here:
 - no other ssl* key (sslfactory, sslfactoryarg, sslhostnameverifier,
   sslpasswordcallback, sslcert, ...) and no service: they can switch verification
   off or redirect the connection;
-- TLS keys in lower case only, and no percent-encoded parameter name.
+- TLS keys in lower case only; parameter names plain [A-Za-z0-9_.-] (not empty, so no
+  percent-encoding either), and no %3D or %26 (any case) anywhere in the query, values
+  included (13ca2c6 _helpers.tpl:175-177, 186-188).
 Arguments: dict "key" (config key), "url", "root" (expected sslrootcert path).
 */}}
 {{- define "payee.strictJdbcUrl" -}}
@@ -71,6 +73,9 @@ Arguments: dict "key" (config key), "url", "root" (expected sslrootcert path).
 {{- if regexMatch "[=&;%]" (index (splitList "?" $url) 0) -}}
 {{- fail (printf "%s: no parameter may come before the '?'" $hint) -}}
 {{- end -}}
+{{- if regexMatch "(?i)%(3d|26)" (index (splitList "?" $url) 1) -}}
+{{- fail (printf "%s: no percent-encoded '=' or '&' (%%3D, %%26) in the query" $hint) -}}
+{{- end -}}
 {{- $modes := 0 -}}
 {{- $roots := 0 -}}
 {{- range $pair := splitList "&" (index (splitList "?" $url) 1) -}}
@@ -79,8 +84,8 @@ Arguments: dict "key" (config key), "url", "root" (expected sslrootcert path).
 {{- end -}}
 {{- $name := first (splitList "=" $pair) -}}
 {{- $value := trimPrefix (printf "%s=" $name) $pair -}}
-{{- if contains "%" $name -}}
-{{- fail (printf "%s: parameter names must not be percent-encoded (%s)" $hint $name) -}}
+{{- if not (regexMatch "^[A-Za-z0-9_.-]+$" $name) -}}
+{{- fail (printf "%s: parameter name %q is not plain [A-Za-z0-9_.-] (empty and percent-encoded names are refused)" $hint $name) -}}
 {{- end -}}
 {{- if or (hasPrefix "ssl" (lower $name)) (eq (lower $name) "service") -}}
 {{- if ne $name (lower $name) -}}
@@ -110,26 +115,32 @@ Arguments: dict "key" (config key), "url", "root" (expected sslrootcert path).
 
 {{/*
 config.* must not reach the datasource or Flyway around the parsed URL keys (review #13):
-- no spring.datasource.* or spring.flyway.* key in any spelling (SPRING_DATASOURCE_URL,
-  spring.datasource.url, SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_*), except
-  SPRING_DATASOURCE_USERNAME;
+- no spring.datasource.*, spring.flyway.*, spring.liquibase.* or spring.r2dbc.* key in
+  any spelling (SPRING_DATASOURCE_URL, spring.datasource.url, SPRING_R2DBC_URL,
+  SPRING_DATASOURCE_HIKARI_DATA_SOURCE_PROPERTIES_*), except SPRING_DATASOURCE_USERNAME;
+- no key whose name, with '.', '_' and '-' dropped, contains jdbcurl, sslfactory or
+  sslhostnameverifier (13ca2c6 _helpers.tpl:105-111);
 - no jdbc: URL in any value other than the parsed keys;
-- no JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS or JAVA_OPTS that mention jdbc, ssl or spring
-  (system properties outrank the environment).
+- no JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS or JAVA_OPTS that mention jdbc,
+  ssl, spring, flyway, liquibase, datasource, r2dbc or application.json (system
+  properties outrank the environment; 13ca2c6 _helpers.tpl:113-121).
 Arguments: dict "config" (.Values.config), "urlKeys" (keys parsed by payee.strictJdbcUrl).
 */}}
 {{- define "payee.refuseDatasourceOverrides" -}}
 {{- $urlKeys := .urlKeys -}}
 {{- range $key, $value := .config -}}
 {{- $norm := regexReplaceAll "[._-]" (lower $key) "" -}}
-{{- if and (or (hasPrefix "springdatasource" $norm) (hasPrefix "springflyway" $norm)) (ne $norm "springdatasourceusername") -}}
-{{- fail (printf "config.%s is refused: spring.datasource.* and spring.flyway.* come from application.yml and the chart (the URL goes in config.DB_URL, which is parsed; only SPRING_DATASOURCE_USERNAME may be set)" $key) -}}
+{{- if and (regexMatch "^spring(datasource|flyway|liquibase|r2dbc)" $norm) (ne $norm "springdatasourceusername") -}}
+{{- fail (printf "config.%s is refused: spring.datasource.*, spring.flyway.*, spring.liquibase.* and spring.r2dbc.* come from application.yml and the chart (the URL goes in config.DB_URL, which is parsed; only SPRING_DATASOURCE_USERNAME may be set)" $key) -}}
+{{- end -}}
+{{- if regexMatch "jdbcurl|sslfactory|sslhostnameverifier" $norm -}}
+{{- fail (printf "config.%s is refused: a key naming a JDBC URL, an SSL factory or a host name verifier can override the datasource around %s, which the chart parses" $key (join ", " $urlKeys)) -}}
 {{- end -}}
 {{- if and (not (has $key $urlKeys)) (regexMatch "(?i)jdbc:" (toString $value)) -}}
 {{- fail (printf "config.%s is refused: a jdbc: URL belongs only in %s, which the chart parses" $key (join ", " $urlKeys)) -}}
 {{- end -}}
-{{- if and (has $norm (list "javatooloptions" "jdkjavaoptions" "javaopts")) (regexMatch "(?i)jdbc|ssl|spring" (toString $value)) -}}
-{{- fail (printf "config.%s is refused: JVM options must not set JDBC, TLS or Spring properties" $key) -}}
+{{- if and (has $norm (list "javatooloptions" "jdkjavaoptions" "javaoptions" "javaopts")) (regexMatch "(?i)jdbc|ssl|spring|flyway|liquibase|datasource|r2dbc|application[._-]?json" (toString $value)) -}}
+{{- fail (printf "config.%s is refused: JVM options must not mention jdbc, ssl, spring, flyway, liquibase, datasource, r2dbc or application.json (system properties would override the datasource past the parsed URL)" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
