@@ -7,12 +7,15 @@ import org.springframework.boot.test.context.assertj.AssertableApplicationContex
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.NestedExceptionUtils;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Round 5: under the aws profile the service refuses to start unless JDBC verifies
- * Aurora's certificate against the mounted RDS CA bundle and Kafka is SASL_SSL (MSK IAM),
- * or SSL with kafka-strimzi. Tests and local runs have no aws profile and still start.
+ * Aurora's certificate against the mounted RDS CA bundle and Kafka is SASL_SSL (MSK IAM) or
+ * SSL (Strimzi mutual TLS), whatever the Kafka profile (round 6); PLAINTEXT, SASL_PLAINTEXT
+ * and an unset protocol are refused. Tests and local runs have no aws profile and still start.
  */
 class AwsTransportSecurityConfigurationTest {
 
@@ -87,28 +90,64 @@ class AwsTransportSecurityConfigurationTest {
     }
 
     @Test
-    void refusesKafkaWithoutSaslSsl() {
+    void refusesKafkaWithoutTls() {
         aws("spring.kafka.security.protocol=PLAINTEXT")
                 .run(context -> startupFailure(context)
-                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL"));
+                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL or SSL")
+                        .hasMessageContaining("not PLAINTEXT"));
+        aws("spring.kafka.security.protocol=SASL_PLAINTEXT")
+                .run(context -> startupFailure(context)
+                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL or SSL")
+                        .hasMessageContaining("not SASL_PLAINTEXT"));
         aws("spring.kafka.producer.security.protocol=PLAINTEXT")
                 .run(context -> startupFailure(context)
-                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL"));
-        aws("spring.kafka.properties.security.protocol=SSL")
+                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL or SSL"));
+        aws("spring.kafka.producer.security.protocol=SASL_PLAINTEXT")
                 .run(context -> startupFailure(context)
-                        .hasMessageContaining("security.protocol must be SASL_SSL"));
+                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL or SSL"));
+        aws("spring.kafka.properties.security.protocol=PLAINTEXT")
+                .run(context -> startupFailure(context)
+                        .hasMessageContaining("security.protocol must be SASL_SSL or SSL"));
         aws("spring.kafka.admin.security.protocol=PLAINTEXT")
                 .run(context -> startupFailure(context)
-                        .hasMessageContaining("Kafka admin security.protocol must be SASL_SSL"));
+                        .hasMessageContaining("Kafka admin security.protocol must be SASL_SSL or SSL"));
+        profiles("aws,kafka-strimzi", "spring.kafka.security.protocol=SASL_PLAINTEXT")
+                .run(context -> startupFailure(context)
+                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL or SSL")
+                        .hasMessageContaining("not SASL_PLAINTEXT"));
     }
 
     @Test
-    void acceptsMutualTlsOnlyWithTheStrimziProfile() {
-        profiles("aws,kafka-strimzi", "spring.kafka.security.protocol=SSL")
-                .run(context -> assertThat(context).hasNotFailed());
-        aws("spring.kafka.security.protocol=SSL")
+    void refusesAnUnsetKafkaProtocolUnderEveryAssertedProfile() {
+        for (String activeProfiles : List.of("aws,kafka-msk", "aws,kafka-strimzi")) {
+            runner.withPropertyValues("spring.profiles.active=" + activeProfiles, "spring.datasource.url=" + GOOD)
+                    .run(context -> startupFailure(context)
+                            .as(activeProfiles)
+                            .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL or SSL")
+                            .hasMessageContaining("not null"));
+        }
+        // aws alone asserts Kafka too once the outbox relay is on.
+        runner.withPropertyValues("spring.profiles.active=aws", "spring.datasource.url=" + GOOD,
+                        "openfinance.outbox.relay.enabled=true")
                 .run(context -> startupFailure(context)
-                        .hasMessageContaining("must be SASL_SSL"));
+                        .hasMessageContaining("Kafka producer security.protocol must be SASL_SSL or SSL")
+                        .hasMessageContaining("not null"));
+    }
+
+    @Test
+    void acceptsSaslSslOrMutualTlsUnderEveryAssertedProfile() {
+        // Round 6 consistency rule: SASL_SSL (MSK IAM) or SSL (Strimzi mutual TLS), whatever the profile.
+        for (String activeProfiles : List.of("aws,kafka-msk", "aws,kafka-strimzi")) {
+            for (String protocol : List.of("SASL_SSL", "SSL")) {
+                profiles(activeProfiles, "spring.kafka.security.protocol=" + protocol)
+                        .run(context -> assertThat(context).as(activeProfiles + " " + protocol).hasNotFailed());
+            }
+        }
+        // aws alone asserts Kafka too once the outbox relay is on.
+        for (String protocol : List.of("SASL_SSL", "SSL")) {
+            profiles("aws", "spring.kafka.security.protocol=" + protocol, "openfinance.outbox.relay.enabled=true")
+                    .run(context -> assertThat(context).as("aws relay " + protocol).hasNotFailed());
+        }
     }
 
     @Test
@@ -120,7 +159,7 @@ class AwsTransportSecurityConfigurationTest {
                 "spring.datasource.url=" + GOOD + "&sslmode=disable")
                 .run(context -> startupFailure(context).hasMessageContaining("sslmode=disable is not verify-full"));
         profiles("aws", "spring.kafka.security.protocol=PLAINTEXT", "openfinance.outbox.relay.enabled=true")
-                .run(context -> startupFailure(context).hasMessageContaining("must be SASL_SSL"));
+                .run(context -> startupFailure(context).hasMessageContaining("must be SASL_SSL or SSL"));
     }
 
     @Test
