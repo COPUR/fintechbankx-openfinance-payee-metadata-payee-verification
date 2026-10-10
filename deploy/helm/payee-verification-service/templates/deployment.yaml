@@ -91,6 +91,11 @@ spec:
               value: aws
             - name: DATABASE_CA_BUNDLE
               value: {{ printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key | quote }}
+            # Chart-owned deployment marker (never from values; config.FBX_DEPLOYED is refused):
+            # with it the startup TLS assertion is enforced whatever the profiles, and refuses
+            # to start without the aws profile (and kafka-msk or kafka-strimzi when the outbox relay is on) or with a local profile.
+            - name: FBX_DEPLOYED
+              value: "true"
             {{- if .Values.externalSecret.enabled }}
             - name: SPRING_DATASOURCE_PASSWORD
               valueFrom:
@@ -133,6 +138,11 @@ spec:
               value: {{ printf "aws,%s" .Values.kafka.profile | quote }}
             - name: DATABASE_CA_BUNDLE
               value: {{ printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key | quote }}
+            # Chart-owned deployment marker (never from values; config.FBX_DEPLOYED is refused):
+            # with it the startup TLS assertion is enforced whatever the profiles, and refuses
+            # to start without the aws profile (and kafka-msk or kafka-strimzi when the outbox relay is on) or with a local profile.
+            - name: FBX_DEPLOYED
+              value: "true"
             {{- if eq .Values.kafka.profile "kafka-strimzi" }}
             - name: KAFKA_TLS_CERT
               valueFrom:

@@ -122,8 +122,11 @@ config.* must not reach the datasource or Flyway around the parsed URL keys (rev
   sslhostnameverifier (13ca2c6 _helpers.tpl:105-111);
 - no jdbc: URL in any value other than the parsed keys;
 - no JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS or JAVA_OPTS that mention jdbc,
-  ssl, spring, flyway, liquibase, datasource, r2dbc or application.json (system
-  properties outrank the environment; 13ca2c6 _helpers.tpl:113-121).
+  ssl, spring (spring.config.*, spring.profiles.* included), kafka, flyway, liquibase,
+  datasource, r2dbc or application.json, or that read more options from a file (an
+  '@' argument file, -XX:VMOptionsFile, -XX:Flags): system properties outrank the
+  environment (13ca2c6 _helpers.tpl:113-121; cicd-templates 2caa48f fbx.validateJvmOptions).
+  config.* has no valueFrom, and extraEnv is refused whole (below).
 Arguments: dict "config" (.Values.config), "urlKeys" (keys parsed by payee.strictJdbcUrl).
 */}}
 {{- define "payee.refuseDatasourceOverrides" -}}
@@ -139,8 +142,8 @@ Arguments: dict "config" (.Values.config), "urlKeys" (keys parsed by payee.stric
 {{- if and (not (has $key $urlKeys)) (regexMatch "(?i)jdbc:" (toString $value)) -}}
 {{- fail (printf "config.%s is refused: a jdbc: URL belongs only in %s, which the chart parses" $key (join ", " $urlKeys)) -}}
 {{- end -}}
-{{- if and (has $norm (list "javatooloptions" "jdkjavaoptions" "javaoptions" "javaopts")) (regexMatch "(?i)jdbc|ssl|spring|flyway|liquibase|datasource|r2dbc|application[._-]?json" (toString $value)) -}}
-{{- fail (printf "config.%s is refused: JVM options must not mention jdbc, ssl, spring, flyway, liquibase, datasource, r2dbc or application.json (system properties would override the datasource past the parsed URL)" $key) -}}
+{{- if and (has $norm (list "javatooloptions" "jdkjavaoptions" "javaoptions" "javaopts")) (regexMatch "(?i)jdbc|ssl|spring|kafka|flyway|liquibase|datasource|r2dbc|application[._-]?json|(^|\\s)@|-XX:(VMOptionsFile|Flags)" (toString $value)) -}}
+{{- fail (printf "config.%s is refused: JVM options must not mention jdbc, ssl, spring, kafka, flyway, liquibase, datasource, r2dbc or application.json, nor read options from a file ('@' argument file, -XX:VMOptionsFile, -XX:Flags) (system properties would override the datasource, the Kafka client or the profiles past the chart's checks)" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -153,6 +156,16 @@ No configuration import or profile override from values (round 5):
   datasource included, or drop the profile that runs the startup TLS assertion.
   A configtree is allowed only as a chart-rendered value on
   optional:configtree:/etc/fintechbankx/config/; this chart renders none.
+  Any suffix is refused too (SPRING_CONFIG_IMPORT_0, spring.config.import[0],
+  SPRING_CONFIG_NAME): (?i)^spring[._-]?config[._-]?(import|location|
+  additional[._-]?location|name), as cicd-templates 2caa48f fbx.datasourceOverrideName.
+- config.* must not set spring.kafka.* or spring.ssl.* in any spelling
+  ((?i)^spring[._-]?(kafka|ssl)[._-]): the Kafka security protocol, its trust store or
+  host name check come from the kafka-* profile, and an SSL bundle could replace the
+  trust anchors.
+- config.* must not set the deployment marker FBX_DEPLOYED in any spelling (name
+  normalising to FBXDEPLOYED): the chart renders FBX_DEPLOYED=true on every container
+  that runs the startup TLS assertion, never from values.
 - extraEnv: the chart renders none, so a value there would be silently ignored;
   it is refused, and settings go through config.* (checked above) instead.
 Arguments: dict "config" (.Values.config), "extraEnv" (.Values.extraEnv).
@@ -162,6 +175,15 @@ Arguments: dict "config" (.Values.config), "extraEnv" (.Values.extraEnv).
 {{- $norm := regexReplaceAll "[._-]" (lower $key) "" -}}
 {{- if or (hasPrefix "springconfig" $norm) (eq $norm "springapplicationjson") (hasPrefix "springprofiles" $norm) -}}
 {{- fail (printf "config.%s is refused: configuration imports and locations (SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION, SPRING_CONFIG_ADDITIONAL_LOCATION), SPRING_APPLICATION_JSON and the active profiles are chart-rendered only (a configtree only as optional:configtree:/etc/fintechbankx/config/)" $key) -}}
+{{- end -}}
+{{- if regexMatch "(?i)^spring[._-]?config[._-]?(import|location|additional[._-]?location|name)" $key -}}
+{{- fail (printf "config.%s is refused: a config import, location or name can load a file or config tree that overrides the datasource past the sslmode=verify-full check; the chart renders no config import" $key) -}}
+{{- end -}}
+{{- if regexMatch "(?i)^spring[._-]?(kafka|ssl)[._-]" $key -}}
+{{- fail (printf "config.%s is refused: spring.kafka.* and spring.ssl.* come from application.yml and the kafka-* profile (they set the Kafka security protocol and trust, and an SSL bundle could replace the trust anchors)" $key) -}}
+{{- end -}}
+{{- if eq (upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "")) "FBXDEPLOYED" -}}
+{{- fail (printf "config.%s is refused: FBX_DEPLOYED is the chart-owned deployment marker that enforces the startup TLS assertion; values never set it" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- with .extraEnv -}}
