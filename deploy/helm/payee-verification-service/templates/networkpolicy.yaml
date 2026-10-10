@@ -9,7 +9,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "payee.name" . }}
-  namespace: {{ include "payee.namespace" . }}
+  namespace: {{ include "payee.namespace" . | quote }}
   labels:
     {{- include "payee.labels" . | nindent 4 }}
 spec:
@@ -22,17 +22,17 @@ spec:
         {{- range .Values.networkPolicy.apiCallerNamespaces }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ . }}
+              kubernetes.io/metadata.name: {{ . | quote }}
         {{- end }}
       ports:
-        - port: {{ $.Values.service.port }}
+        - port: {{ $.Values.service.port | int }}
           protocol: TCP
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.networkPolicy.prometheusNamespace }}
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.prometheusNamespace | quote }}
       ports:
-        - port: {{ .Values.service.managementPort }}
+        - port: {{ .Values.service.managementPort | int }}
           protocol: TCP
     # Istio sidecar: 15021 health (rewritten kubelet probes), 15020 merged Prometheus metrics.
     - ports:
@@ -60,7 +60,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }}
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace | quote }}
       ports:
         - port: 4317
           protocol: TCP
@@ -69,7 +69,7 @@ spec:
     - to:
         {{- range .Values.networkPolicy.databaseCidrs }}
         - ipBlock:
-            cidr: {{ . }}
+            cidr: {{ . | quote }}
         {{- end }}
       ports:
         - port: 5432
@@ -77,11 +77,11 @@ spec:
     - to:
         {{- range .Values.networkPolicy.kafkaCidrs }}
         - ipBlock:
-            cidr: {{ . }}
+            cidr: {{ . | quote }}
         {{- end }}
       ports:
         {{- range .Values.networkPolicy.kafkaPorts }}
-        - port: {{ . }}
+        - port: {{ . | int }}
           protocol: TCP
         {{- end }}
     - to:
