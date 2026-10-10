@@ -12,13 +12,15 @@ import java.util.regex.Pattern;
 
 /**
  * Maps PayeeVerificationCompleted to the public envelope of
- * api/asyncapi/svc-of-payee-verification.yaml. Ids and facts only.
+ * api/asyncapi/svc-of-payee-verification.yaml. One topic per aggregate (ADR-019):
+ * evt.of.payee.v1, keyed by verificationId; the eventType (envelope and record
+ * header) names the event. Ids and facts only.
  */
 public class PayeeVerificationEventEnvelopeFactory {
 
     public static final String PRODUCER = "svc-of-payee-verification";
     public static final String AGGREGATE_TYPE = "PayeeVerification";
-    public static final String TOPIC = "evt.of.payee.verification-completed.v1";
+    public static final String TOPIC = "evt.of.payee.v1";
     public static final String EVENT_TYPE = "OpenFinance.PayeeVerification.VerificationCompleted.v1";
     /** Decisions are insert-only, so every decision is version 0. */
     static final long AGGREGATE_VERSION = 0L;

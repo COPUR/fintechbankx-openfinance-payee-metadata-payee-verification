@@ -9,7 +9,7 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
 | Slice | Confirmation of Payee: name matching, account-status check, decision record |
 | Owned data | `db_of_payee_verification_<env>`, schema `sc_of_payee_verification`: `payee_directory_entry` (projection), `payee_verification`, `outbox_event`, `dpop_proof_replay` |
 | API | `POST /open-finance/v1/confirmation-of-payee/confirmation` (`api/openapi/confirmation-of-payee-service.yaml`) |
-| Events | `evt.of.payee.verification-completed.v1` (`api/asyncapi/svc-of-payee-verification.yaml`) |
+| Events | Topic `evt.of.payee.v1`, one topic for the payee aggregate (ADR-019): record key `verificationId`; UTF-8 headers `eventType` (`OpenFinance.PayeeVerification.VerificationCompleted.v1`), `eventId` and `correlationId`, plus `x-fapi-interaction-id` and `traceparent` when present (`api/asyncapi/svc-of-payee-verification.yaml`) |
 | Depends on | core-banking export for the directory (ADR-0001); platform Keycloak, MSK; platform mesh PR #11 (gateway route); `ClusterSecretStore` `aws-secrets-manager` |
 
 ## 1. Source in the monolith
@@ -101,7 +101,7 @@ no shadow traffic, no weighted split, no route back to the monolith.
 | Keycloak client setup | TPP tokens with `aud = svc-of-payee-verification` and DPoP binding (`cnf.jkt`) |
 | `DPOP_PUBLIC_BASE_URL` | the public gateway origin TPPs sign in the DPoP `htu`; the chart does not render and the service does not start without it |
 | DBA bootstrap, Terraform and the first directory import (section 2) | roles, grants, secrets, Aurora, directory rows |
-| Topic `evt.of.payee.verification-completed.v1` in the topic catalog | only before step 4 (relay) |
+| Topic `evt.of.payee.v1` in the topic catalog (6 partitions, 7-day retention; provisioned in Kafka #12 `c4b69b0`) | only before step 4 (relay) |
 
 ### Steps
 
@@ -119,7 +119,7 @@ No dual writes at any step: only the service records decisions.
 ### Parity requests are real decisions: park their events before step 4
 
 Every parity request that returns `200` records a decision and writes an
-`evt.of.payee.verification-completed.v1` row to the outbox; with the relay off
+`OpenFinance.PayeeVerification.VerificationCompleted.v1` row (topic `evt.of.payee.v1`) to the outbox; with the relay off
 (steps 1 to 3) it waits there, and step 4 would publish it to real consumers.
 So the parity check runs only as a dedicated parity TPP client
 (`<parity-client-id>`, a Keycloak client registered for go-live and disabled
@@ -167,7 +167,7 @@ Responses are **not** identical to the monolith's:
 | Missing `X-FAPI-Interaction-ID` | `500` | `400` `INVALID_REQUEST` |
 | Repeated `X-FAPI-Interaction-ID` | evaluated again | stored decision returned; for another account `409` |
 | `X-OF-Cache` | `HIT`/`MISS` | not sent |
-| Decisions and events | memory and logs only | `payee_verification` rows and `evt.of.payee.verification-completed.v1` |
+| Decisions and events | memory and logs only | `payee_verification` rows and `OpenFinance.PayeeVerification.VerificationCompleted.v1` on `evt.of.payee.v1` |
 
 ### Rollback triggers (any one, measured at the gateway)
 
@@ -272,5 +272,5 @@ Parked rows are not purged. Find stuck rows with
 - [x] DPoP and audience enforced; TPP id from the token
 - [x] Migration, seed and import rehearsed in CI
 - [ ] Core-banking export job and import schedule agreed (ADR-0001 gap)
-- [ ] Topic `evt.of.payee.verification-completed.v1` added to the platform topic catalog
+- [ ] Topic `evt.of.payee.v1` added to the platform topic catalog (Kafka #12 `c4b69b0`)
 - [ ] Gateway route switched in one step (platform mesh PR #11)

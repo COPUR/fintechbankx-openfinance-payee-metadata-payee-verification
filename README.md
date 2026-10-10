@@ -68,7 +68,7 @@ Service `svc-of-payee-verification` (slug `payee-verification-service`) answers
 ([OpenAPI](api/openapi/confirmation-of-payee-service.yaml)), records every
 decision in PostgreSQL schema `sc_of_payee_verification` without names, and
 publishes `OpenFinance.PayeeVerification.VerificationCompleted.v1` on
-`evt.of.payee.verification-completed.v1` through a transactional outbox
+`evt.of.payee.v1` (one topic per aggregate, ADR-019; key `verificationId`, `eventType` header) through a transactional outbox
 ([AsyncAPI](api/asyncapi/svc-of-payee-verification.yaml)).
 
 Build and test (Java 23):

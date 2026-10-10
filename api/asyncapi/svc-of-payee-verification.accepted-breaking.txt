@@ -1,0 +1,6 @@
+# Accepted breaking findings for svc-of-payee-verification.yaml (scripts/ci/asyncapi-breaking.mjs).
+# One topic per aggregate (ADR-019 sections 1 and 8, owner decision 2026-10-08): the per-event channel
+# moves to evt.of.payee.v1 (provisioned by the platform, Kafka #12 c4b69b0). Nothing was ever published
+# to the per-event topic, so there is no dual-publish; the spec stays 1.0.0 because it is not on the
+# catalog's main.
+removed-channel evt.of.payee.verification-completed.v1  # pre-release: not on catalog main; moved to evt.of.payee.v1 (ADR-019)

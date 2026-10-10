@@ -204,7 +204,7 @@ denied() {
 app=payee_verification_app; imp=payee_verification_import; own=payee_verification_migrate; ops=payee_verification_ops
 allowed "app reads the directory" $app "select count(*) from payee_directory_entry"
 allowed "app records a decision and reads it back" $app "select count(*) from payee_verification"
-allowed "app writes, relays and purges the outbox" $app "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.rehearsal.v1', '{}', 'ix-1', now()); update outbox_event set published_at = now(); delete from outbox_event"
+allowed "app writes, relays and purges the outbox" $app "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.v1', '{}', 'ix-1', now()); update outbox_event set published_at = now(); delete from outbox_event"
 allowed "app checks and purges DPoP replays" $app "insert into dpop_proof_replay values (repeat('b', 64), now()) on conflict (proof_key) do nothing; delete from dpop_proof_replay where expires_at < now() + interval '1 day'"
 denied "app cannot change the directory" $app "update payee_directory_entry set account_status = 'CLOSED'"
 denied "app cannot insert into the directory" $app "insert into payee_directory_entry (scheme_name, identification, holder_name, account_type, account_status, updated_at) values ('X', 'X', 'x', 'PERSONAL', 'ACTIVE', now())"
@@ -227,7 +227,7 @@ expect "park_outbox_event runs as its owner with a pinned search_path" "true|pay
   "select prosecdef || '|' || proowner::regrole || '|' || array_to_string(proconfig, ',') from pg_proc where oid = '$schema.park_outbox_event(uuid, text)'::regprocedure"
 expect "only the ops role (and the owner) may execute park_outbox_event" "payee_verification_ops" \
   "select string_agg(grantee, ',' order by grantee) from information_schema.routine_privileges where routine_schema = '$schema' and routine_name = 'park_outbox_event' and privilege_type = 'EXECUTE' and grantee <> 'payee_verification_migrate'"
-event_id="$(as_role payee_verification_app -At -c "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.rehearsal.v1', '{}', 'ix-2', now()) returning event_id")"
+event_id="$(as_role payee_verification_app -At -c "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.v1', '{}', 'ix-2', now()) returning event_id")"
 if PGUSER=payee_verification_ops PGPASSWORD="$pw_ops" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" " " >/dev/null 2>"$work/park.err"; then
   echo "FAIL operator park accepted a blank reason" >&2; exit 1
 fi

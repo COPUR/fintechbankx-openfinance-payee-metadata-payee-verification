@@ -20,17 +20,20 @@ info:
     holder name or the raw account identification; the account is referenced by accountReferenceHash
     (lower-case hex SHA-256 of `SCHEME:IDENTIFICATION`, pseudonymous, treat as confidential).
 
-    Topic (matches the platform topic catalog): evt.of.payee.verification-completed.v1, 6 partitions,
-    replication factor 3, cleanup.policy delete, retention 7 days. This provider declares no dead-letter
+    Topic (matches the platform topic catalog): evt.of.payee.v1, the one topic of the payee aggregate (ADR-019), 6
+    partitions, replication factor 3, cleanup.policy delete, retention 7 days. The eventType record header names the
+    event; consumers skip event types they do not handle. This provider declares no dead-letter
     topic: DLQs are owned by each consumer (ADR-019, ADR-024). Publish failures are handled in the outbox
     (ADR-021 decision 4), never by writing to another topic.
 
     Every message uses the standard FinTechBankX envelope (common/event-envelope.yaml). Record key is the aggregateId
-    (verificationId). Envelope values for this producer: occurredAt is the UTC instant at which the decision was made;
+    (verificationId), UTF-8 text; the record headers eventType, eventId and correlationId (UTF-8 text, required) repeat
+    the envelope fields, and x-fapi-interaction-id and traceparent are added when present. Envelope values for this producer: occurredAt is the UTC instant at which the decision was made;
     aggregateVersion is always 0 because decisions are insert-only; causationId is always null because a verification
     starts its flow; correlationId is the x-fapi-interaction-id of the request that produced the decision; the
-    traceparent header, when present, is the W3C trace context of that request. Adding an optional field is a minor
-    change; any removal, rename or type change is a new major version on a new topic.
+    traceparent header, when present, is the W3C trace context of that request. Adding an optional field or a new
+    event type is non-breaking; a breaking change to the event is a new event major (...VerificationCompleted.v2) on the
+    same topic alongside v1, and the topic major changes only for key, partition or cleanup changes (ADR-019 section 5).
   tags:
   - name: open-finance
   - name: evt.of.payee
@@ -60,16 +63,18 @@ servers:
     security:
     - $ref: '#/components/securitySchemes/mtls'
 channels:
-  verificationCompleted:
-    address: evt.of.payee.verification-completed.v1
-    title: evt.of.payee.verification-completed.v1
-    description: OpenFinance.PayeeVerification.VerificationCompleted.v1. A Confirmation of Payee decision was recorded.
+  payee:
+    address: evt.of.payee.v1
+    title: evt.of.payee.v1
+    description: 'Every event of the payee aggregate (ADR-019, one topic per aggregate), keyed by aggregateId. The eventType
+      record header names the event: OpenFinance.PayeeVerification.VerificationCompleted.v1 (a Confirmation of Payee
+      decision was recorded). Consumers skip event types they do not handle.'
     messages:
       PayeeVerificationCompleted:
         $ref: '#/components/messages/PayeeVerificationCompleted'
     bindings:
       kafka:
-        topic: evt.of.payee.verification-completed.v1
+        topic: evt.of.payee.v1
         partitions: 6
         replicas: 3
         topicConfiguration:
@@ -82,17 +87,15 @@ operations:
   publishPayeeVerificationCompleted:
     action: send
     title: Publish OpenFinance.PayeeVerification.VerificationCompleted.v1
-    summary: svc-of-payee-verification publishes OpenFinance.PayeeVerification.VerificationCompleted.v1 through its transactional outbox.
+    summary: svc-of-payee-verification publishes OpenFinance.PayeeVerification.VerificationCompleted.v1 to evt.of.payee.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/verificationCompleted'
+      $ref: '#/channels/payee'
     messages:
-    - $ref: '#/channels/verificationCompleted/messages/PayeeVerificationCompleted'
+    - $ref: '#/channels/payee/messages/PayeeVerificationCompleted'
 components:
   schemas:
     EventEnvelope:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
-    EventHeaders:
-      $ref: ./common/event-envelope.yaml#/EventHeaders
     PayeeVerificationCompletedData:
       type: object
       description: Payload of OpenFinance.PayeeVerification.VerificationCompleted.v1. Ids and facts only.
@@ -143,7 +146,12 @@ components:
       summary: A Confirmation of Payee decision was recorded.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: ./common/event-envelope.yaml#/EventHeaders
+        - type: object
+          properties:
+            eventType:
+              const: OpenFinance.PayeeVerification.VerificationCompleted.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'

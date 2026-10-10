@@ -13,7 +13,7 @@
 - file: `docs/architecture/open-finance/capabilities/hld/confirmation-of-payee-hld.md` -> `docs/hld/confirmation-of-payee-hld.md`
 - file: `docs/architecture/open-finance/capabilities/test-suites/confirmation-of-payee-test-suite.md` -> `docs/test-suites/confirmation-of-payee-test-suite.md`
 
-- 2026-10-08 (branch `claude/openfinance-deployable-ra36dq`): newer Confirmation of Payee behaviour ported from monolith `open-finance-context` (`ConfirmationOfPayee*`, `IbanValidator`, `ConfirmationDecisionPolicy`, Levenshtein matcher, directory cache); own schema `sc_of_payee_verification` with Flyway, outbox `evt.of.payee.*`, Helm `deploy/helm/payee-verification-service`, Terraform `deploy/terraform` (replace `infrastructure/` and `infra/terraform/`). See `docs/migration/RUNBOOK-EXTRACT-of-payee-verification.md`.
+- 2026-10-08 (branch `claude/openfinance-deployable-ra36dq`): newer Confirmation of Payee behaviour ported from monolith `open-finance-context` (`ConfirmationOfPayee*`, `IbanValidator`, `ConfirmationDecisionPolicy`, Levenshtein matcher, directory cache); own schema `sc_of_payee_verification` with Flyway, outbox to `evt.of.payee.v1` (one topic per aggregate since 2026-10-10, ADR-019), Helm `deploy/helm/payee-verification-service`, Terraform `deploy/terraform` (replace `infrastructure/` and `infra/terraform/`). See `docs/migration/RUNBOOK-EXTRACT-of-payee-verification.md`.
 
 ## Notes
 

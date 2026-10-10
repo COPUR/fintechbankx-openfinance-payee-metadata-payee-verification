@@ -42,25 +42,35 @@ class AsyncApiContractTest {
     @Test
     void envelopeAndHeadersAreTheSharedCatalogEnvelope() {
         Map<String, Object> schemas = map(map(spec, "components"), "schemas");
+        Map<String, Object> message = map(map(map(spec, "components"), "messages"), "PayeeVerificationCompleted");
 
         assertThat(map(schemas, "EventEnvelope")).containsOnly(Map.entry("$ref", ENVELOPE_FILE + "#/EventEnvelope"));
-        assertThat(map(schemas, "EventHeaders")).containsOnly(Map.entry("$ref", ENVELOPE_FILE + "#/EventHeaders"));
+        // ADR-019 section 3: the eventType record header carries the same const as the payload.
+        List<Map<String, Object>> headers = (List<Map<String, Object>>) map(message, "headers").get("allOf");
+        assertThat(headers).hasSize(2);
+        assertThat(headers.get(0)).containsOnly(Map.entry("$ref", ENVELOPE_FILE + "#/EventHeaders"));
+        assertThat(map(map(headers.get(1), "properties"), "eventType"))
+            .containsOnly(Map.entry("const", PayeeVerificationEventEnvelopeFactory.EVENT_TYPE));
+        List<Map<String, Object>> payload = (List<Map<String, Object>>) map(message, "payload").get("allOf");
+        assertThat(map(map(payload.get(1), "properties"), "eventType"))
+            .containsOnly(Map.entry("const", PayeeVerificationEventEnvelopeFactory.EVENT_TYPE));
     }
 
     @Test
     void onlyTheProvidersOwnTopicIsDeclaredNoDeadLetterChannel() {
         // DLQs are consumer-owned (ADR-019, ADR-024): the provider declares none.
-        assertThat(map(spec, "channels")).containsOnlyKeys("verificationCompleted");
+        // One topic per aggregate (ADR-019): one channel, evt.of.payee.v1.
+        assertThat(map(spec, "channels")).containsOnlyKeys("payee");
         assertThat(map(map(spec, "components"), "messages")).containsOnlyKeys("PayeeVerificationCompleted");
     }
 
     @Test
     void topicMatchesTheCatalogEntry() {
-        Map<String, Object> channel = map(map(spec, "channels"), "verificationCompleted");
+        Map<String, Object> channel = map(map(spec, "channels"), "payee");
         Map<String, Object> kafka = map(map(channel, "bindings"), "kafka");
         Map<String, Object> config = map(kafka, "topicConfiguration");
 
-        assertThat(channel.get("address")).isEqualTo(PayeeVerificationEventEnvelopeFactory.TOPIC);
+        assertThat(channel.get("address")).isEqualTo(PayeeVerificationEventEnvelopeFactory.TOPIC).isEqualTo("evt.of.payee.v1");
         assertThat(kafka.get("topic")).isEqualTo(PayeeVerificationEventEnvelopeFactory.TOPIC);
         assertThat(kafka.get("partitions")).isEqualTo(6);
         assertThat(kafka.get("replicas")).isEqualTo(3);

@@ -1,7 +1,7 @@
 # AWS resources owned by svc-of-payee-verification: its own Aurora PostgreSQL
 # cluster (db_of_payee_verification_<env>, schema sc_of_payee_verification),
 # encryption key, credentials and the IRSA role its pods use, scoped to its
-# own secret and its own Kafka topic namespace (evt.of.payee.*). Shared
+# own secret and its own Kafka topic (evt.of.payee.v1). Shared
 # platform pieces (log group, SSM parameters, runtime secret) come from the
 # platform microservice-base module.
 
@@ -226,7 +226,7 @@ data "aws_iam_policy_document" "workload" {
 }
 
 # Kafka (Amazon MSK, IAM auth): connect, and produce only to the service's
-# own namespace evt.of.payee.*. Switch to the platform msk-client-access
+# aggregate topic evt.of.payee.v1 (one topic per aggregate, ADR-019). Switch to the platform msk-client-access
 # module once it is released on terraform-modules main.
 data "aws_iam_policy_document" "kafka" {
   statement {
@@ -236,9 +236,9 @@ data "aws_iam_policy_document" "kafka" {
   }
 
   statement {
-    sid       = "ProduceOwnNamespace"
+    sid       = "ProduceOwnTopic"
     actions   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
-    resources = ["${local.msk_topic_prefix_arn}/evt.of.payee.*"]
+    resources = ["${local.msk_topic_prefix_arn}/evt.of.payee.v1"]
   }
 }
 

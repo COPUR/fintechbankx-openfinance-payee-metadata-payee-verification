@@ -10,7 +10,7 @@ is not evidence that anything is deployed or compliant.
 | Container `payee-verification-service` (Java 23, Spring Boot 3.3, user 10001) | EKS, namespace `open-finance`, Istio sidecar | `Dockerfile`, `deploy/helm/payee-verification-service` |
 | API `POST /open-finance/v1/confirmation-of-payee/confirmation` on 8080; health/metrics on 8081 | behind the Istio ingress gateway | `api/openapi/confirmation-of-payee-service.yaml` |
 | Aurora PostgreSQL Serverless v2 `db_of_payee_verification_<env>`, schema `sc_of_payee_verification` | private subnets, two or more AZs | `deploy/terraform/main.tf`, Flyway `src/main/resources/db/migration` |
-| Event `OpenFinance.PayeeVerification.VerificationCompleted.v1` on `evt.of.payee.verification-completed.v1` | Amazon MSK (IAM auth) through the outbox relay | `api/asyncapi/svc-of-payee-verification.yaml` |
+| Event `OpenFinance.PayeeVerification.VerificationCompleted.v1` on `evt.of.payee.v1` (aggregate topic, key `verificationId`, `eventType` header) | Amazon MSK (IAM auth) through the outbox relay | `api/asyncapi/svc-of-payee-verification.yaml` |
 | Payee directory (projection of core-banking accounts) | `payee_directory_entry`, loaded by `db/import` | ADR-0001 |
 
 ## Reliability
@@ -75,7 +75,7 @@ is not evidence that anything is deployed or compliant.
   the SECURITY DEFINER `park_outbox_event` and read access to row ids and park
   state only). Secrets are synced by External Secrets from
   ClusterSecretStore `aws-secrets-manager`; the IRSA role produces only to
-  `evt.of.payee.*`.
+  `evt.of.payee.v1`.
 - Audit: every insert and update of `payee_directory_entry` lands in the
   append-only `payee_directory_entry_history` (login role, `application_name`,
   time, old/new type, status and `updated_at`; holder names only as SHA-256

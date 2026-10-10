@@ -39,8 +39,8 @@ output "master_user_secret_arn" {
 }
 
 output "kafka_topic_namespace" {
-  description = "Topics the IRSA role may produce to."
-  value       = "evt.of.payee.*"
+  description = "Topic the IRSA role may produce to (the payee aggregate topic, ADR-019)."
+  value       = "evt.of.payee.v1"
 }
 
 output "log_group_name" {
