@@ -1,0 +1,9 @@
+.git
+.gradle
+build
+deploy
+docs
+db
+scripts
+src/test
+**/.terraform

@@ -1,0 +1,138 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml.
+
+serviceId: svc-of-payee-verification
+# Platform contract: every svc-of-* service runs in the open-finance namespace
+# (istio-injection=enabled, mesh-wide STRICT mTLS, default-deny authorization).
+namespace: open-finance
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/payee-verification-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  # Must equal the service slug: IRSA trust and mesh principals use
+  # system:serviceaccount:open-finance:payee-verification-service.
+  name: payee-verification-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+podLabels:
+  app.kubernetes.io/part-of: fintechbankx-open-finance
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 768Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 60
+
+podDisruptionBudget:
+  minAvailable: 2
+
+kafka:
+  # Spring profile with the Kafka authentication: kafka-msk (AWS) or kafka-strimzi. The service
+  # container runs aws,<profile>; under aws it refuses to start unless Kafka is SASL_SSL or SSL
+  # (never PLAINTEXT) and DB_URL verifies TLS. The migrate init container runs aws alone.
+  profile: kafka-msk
+  # Secret with user.crt, user.key and ca.crt when profile is kafka-strimzi.
+  strimziTlsSecret: kafka-client-tls
+
+# Non-secret runtime settings, rendered into a ConfigMap. Empty values are not rendered,
+# and rendering fails while DB_URL, OIDC_ISSUER_URI, OIDC_JWK_SET_URI, OIDC_AUDIENCE or
+# DPOP_PUBLIC_BASE_URL is empty (and KAFKA_BOOTSTRAP_SERVERS while the relay is on). DB_URL is
+# parsed strictly (exactly one sslmode=verify-full and one sslrootcert, no other ssl* key or
+# service), and no spring.datasource.* or spring.flyway.* key (except
+# SPRING_DATASOURCE_USERNAME), other jdbc: value or JVM options with JDBC, TLS or Spring
+# properties may be set here. SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION,
+# SPRING_CONFIG_ADDITIONAL_LOCATION, SPRING_APPLICATION_JSON and SPRING_PROFILES_* are
+# chart-rendered only, and any extraEnv fails the render: this chart renders none.
+config:
+  # required: deploy/terraform output jdbc_url. It must verify Aurora's certificate against
+  # databaseCaBundle; rendering fails otherwise:
+  # jdbc:postgresql://<endpoint>:5432/db_of_payee_verification_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  DB_URL: ""
+  # Runtime role: DML the use cases need, owns nothing (db/bootstrap, V6__grant_least_privilege.sql).
+  DB_USERNAME: payee_verification_app
+  DB_POOL_MAX: "10"
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
+  OIDC_ISSUER_URI: ""             # required: https://<identity-host>/realms/fintechbankx
+  OIDC_JWK_SET_URI: ""            # required: <issuer>/protocol/openid-connect/certs
+  OIDC_AUDIENCE: svc-of-payee-verification
+  DPOP_PUBLIC_BASE_URL: ""        # public Open Finance gateway origin TPPs sign in DPoP htu, e.g. https://<api-gateway-host>; required
+  COP_CLOSE_MATCH_THRESHOLD: "85"
+  COP_DIRECTORY_CACHE_TTL: PT30S
+  OUTBOX_RELAY_ENABLED: "true"   # explicit: the app defaults to false; set "false" until the topic exists (runbook)
+  PAYEE_DIRECTORY_SEED_ENABLED: "false"   # sample data; never true outside local/dev
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
+  TRACING_SAMPLING_PROBABILITY: "0.1"
+
+# Amazon RDS CA bundle for PostgreSQL TLS (sslmode=verify-full). The platform's
+# trust-manager publishes ConfigMap rds-ca-bundle (key global-bundle.pem) into every
+# service namespace (platform contract, "Database CA bundle"); the chart mounts it
+# read-only into the migrate init container and the service container, and
+# config.DB_URL must point sslrootcert at <mountPath>/<key>.
+databaseCaBundle:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# Flyway runs in the "migrate" init container as the schema owner.
+migration:
+  username: payee_verification_migrate
+
+# Database credentials, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  # Secrets Manager secret <env>/payee-verification-service/db-app
+  # (deploy/terraform output app_db_secret_name).
+  remoteSecretName: ""
+  # Secrets Manager secret <env>/payee-verification-service/db-migration
+  # (output migration_db_secret_name); only the migrate init container reads it.
+  migrationRemoteSecretName: ""
+  refreshInterval: 1h
+  # Bump (e.g. to the rotation date) after rotating a password in Secrets Manager: the
+  # ExternalSecrets re-sync and checksum/secret rolls the pods onto the new credential.
+  rotation: ""
+
+networkPolicy:
+  # Opt-in. The platform mesh repository owns NetworkPolicy (cicd-templates
+  # 1dd1138 turns chart policies off by default); enable only where the mesh
+  # repository does not already cover this namespace.
+  enabled: false
+  # Namespaces whose pods may call the API. Only the ingress gateway: no
+  # internal service calls this TPP API, and service-role tokens are refused.
+  apiCallerNamespaces:
+    - istio-ingress
+  prometheusNamespace: observability
+  observabilityNamespace: observability
+  # Aurora subnets (private_subnet_ids CIDRs); PostgreSQL is reached on 5432 only.
+  # Required when enabled: rendering fails while this list is empty.
+  databaseCidrs: []
+  # Subnets of the MSK / Strimzi brokers, reached on kafkaPorts only.
+  kafkaCidrs:
+    - 10.0.0.0/8
+  # 9098 MSK IAM, 9093 Strimzi TLS.
+  kafkaPorts:
+    - 9098
+    - 9093
+
+topologySpread:
+  maxSkew: 1

@@ -61,6 +61,64 @@ Bu repository, FinTechBankX DDD/EDA dönüşümünde **svc-of-payee-verification
 - Katkı süreci için `CONTRIBUTING.md` ve squad runbook'ları izlenmelidir.
 - PR'larda mimari kararlar ADR veya backlog referansı ile ilişkilendirilmelidir.
 
+## Run and deploy
+
+Service `svc-of-payee-verification` (slug `payee-verification-service`) answers
+`POST /open-finance/v1/confirmation-of-payee/confirmation`
+([OpenAPI](api/openapi/confirmation-of-payee-service.yaml)), records every
+decision in PostgreSQL schema `sc_of_payee_verification` without names, and
+publishes `OpenFinance.PayeeVerification.VerificationCompleted.v1` on
+`evt.of.payee.v1` (one topic per aggregate, ADR-019; key `verificationId`, `eventType` header) through a transactional outbox
+([AsyncAPI](api/asyncapi/svc-of-payee-verification.yaml)).
+
+Build and test (Java 23):
+
+```bash
+./gradlew check                      # unit, web, ArchUnit tests + 85 % line coverage
+TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> TEST_DB_PASSWORD=<pw> \
+  ./gradlew check                    # also runs the PostgreSQL integration tests
+```
+
+Without `TEST_DB_URL` the integration tests are skipped on a developer machine
+and fail in CI (`CI=true` or `JENKINS_URL` set).
+
+Run locally against PostgreSQL with the sample directory:
+
+```bash
+DB_URL=jdbc:postgresql://localhost:5432/db_of_payee_verification_local DB_USERNAME=<user> \
+SPRING_DATASOURCE_PASSWORD=<pw> PAYEE_DIRECTORY_SEED_ENABLED=true \
+DPOP_PUBLIC_BASE_URL=http://localhost:8080 \
+OIDC_ISSUER_URI=<issuer> OIDC_JWK_SET_URI=<jwks> ./gradlew bootRun
+```
+
+`DPOP_PUBLIC_BASE_URL` is required (no default): the service refuses to start
+without it. The outbox relay is off unless `OUTBOX_RELAY_ENABLED=true`.
+
+Outbox metrics: `outbox_pending_events`, `outbox_oldest_pending_age_seconds`
+(pages the squad), `outbox_send_failures_total{exception}`, gauge
+`outbox_parked_rows` (rows parked now) and counter
+`outbox_parked_events_total{exception}`: one increment per parked row, tagged
+with the payload error class or `OperatorPark` for a park by
+`db/ops/park-outbox-event.sh` (counted once by the relay, column
+`park_counted`, V8). Parked events alert through the platform rule
+`OutboxEventsParked` (any increase over 15 minutes, warning, routed by squad
+with namespace fallback); the service ships no parked alert rule.
+
+Callers need an access token with `aud` = `svc-of-payee-verification`; TPP
+tokens must be DPoP-bound (`Authorization: DPoP <token>` plus a `DPoP` proof).
+
+Deploy:
+
+| What | Where |
+|---|---|
+| Container image (non-root, ports 8080/8081) | [Dockerfile](Dockerfile) |
+| Helm chart (namespace `open-finance`) | [deploy/helm/payee-verification-service](deploy/helm/payee-verification-service/values.yaml) |
+| AWS resources (Aurora PostgreSQL Serverless v2, KMS, secret, IRSA, MSK policy) | [deploy/terraform](deploy/terraform/main.tf) |
+| Payee directory import from core banking | [db/import/import-payee-directory.sh](db/import/import-payee-directory.sh), [ADR-0001](docs/architecture/decisions/ADR-0001-payee-directory-projection.md) |
+| Migration rehearsal | [scripts/migration/verify-migration.sh](scripts/migration/verify-migration.sh) |
+| Well-Architected view | [DEPLOYMENT_AND_WELL_ARCHITECTED.md](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
+| Extraction and cutover runbook | [RUNBOOK-EXTRACT-of-payee-verification.md](docs/migration/RUNBOOK-EXTRACT-of-payee-verification.md) |
+
 ## Cell-Based Architecture
 
 This repository participates in the FinTechBankX cell-based resilience program.

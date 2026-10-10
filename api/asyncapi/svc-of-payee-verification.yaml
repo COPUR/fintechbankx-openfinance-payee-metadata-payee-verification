@@ -1,0 +1,201 @@
+# AsyncAPI contract for svc-of-payee-verification.
+# Status: Proposed. This repository owns the contract; the asyncapi catalog mirrors it.
+# Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-of-payee-verification.yaml
+# common/event-envelope.yaml is a verbatim copy of the catalog's shared envelope.
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-of-payee-verification
+info:
+  title: svc-of-payee-verification events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-of-payee-verification (repository fintechbankx-openfinance-payee-metadata-payee-verification).
+
+    Status: Proposed. Owner: Payee and Metadata Squad, Open Finance Tribe. Event namespace: `evt.of.payee`.
+
+    Every Confirmation of Payee decision is recorded in sc_of_payee_verification.payee_verification and, in the same
+    transaction, written to the transactional outbox; OutboxRelay publishes it. Delivery is at least once: consumers
+    de-duplicate on eventId.
+
+    Privacy: the payload carries ids and facts only. It never contains the name typed by the payer, the account
+    holder name or the raw account identification; the account is referenced by accountReferenceHash
+    (lower-case hex SHA-256 of `SCHEME:IDENTIFICATION`, pseudonymous, treat as confidential).
+
+    Topic (matches the platform topic catalog): evt.of.payee.v1, the one topic of the payee aggregate (ADR-019), 6
+    partitions, replication factor 3, cleanup.policy delete, retention 7 days. The eventType record header names the
+    event; consumers skip event types they do not handle. This provider declares no dead-letter
+    topic: DLQs are owned by each consumer (ADR-019, ADR-024). Publish failures are handled in the outbox
+    (ADR-021 decision 4), never by writing to another topic.
+
+    Every message uses the standard FinTechBankX envelope (common/event-envelope.yaml). Record key is the aggregateId
+    (verificationId), UTF-8 text; the record headers eventType, eventId and correlationId (UTF-8 text, required) repeat
+    the envelope fields, and x-fapi-interaction-id and traceparent are added when present. Envelope values for this producer: occurredAt is the UTC instant at which the decision was made;
+    aggregateVersion is always 0 because decisions are insert-only; causationId is always null because a verification
+    starts its flow; correlationId is the x-fapi-interaction-id of the request that produced the decision; the
+    traceparent header, when present, is the W3C trace context of that request. Adding an optional field or a new
+    event type is non-breaking; a breaking change to the event is a new event major (...VerificationCompleted.v2) on the
+    same topic alongside v1, and the topic major changes only for key, partition or cleanup changes (ADR-019 section 5).
+  tags:
+  - name: open-finance
+  - name: evt.of.payee
+  x-service-id: svc-of-payee-verification
+  x-event-namespace: evt.of.payee
+  x-owning-squad: Payee and Metadata Squad
+defaultContentType: application/json
+servers:
+  msk:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: Amazon MSK cluster of the FinTechBankX event platform (svc-evt-streaming) on AWS. TLS in transit,
+      SASL_SSL with mechanism AWS_MSK_IAM using the service's IRSA role (ADR-024, platform contract 2026-10-08).
+    variables:
+      bootstrapServers:
+        description: MSK IAM bootstrap brokers (port 9098), injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mskIam'
+  local:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: Strimzi cluster in namespace kafka, for local and non-AWS environments only. Mutual TLS with
+      Strimzi-issued client certificates.
+    variables:
+      bootstrapServers:
+        description: Strimzi TLS bootstrap service, injected per environment.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
+channels:
+  payee:
+    address: evt.of.payee.v1
+    title: evt.of.payee.v1
+    description: 'Every event of the payee aggregate (ADR-019, one topic per aggregate), keyed by aggregateId. The eventType
+      record header names the event: OpenFinance.PayeeVerification.VerificationCompleted.v1 (a Confirmation of Payee
+      decision was recorded). Consumers skip event types they do not handle.'
+    messages:
+      PayeeVerificationCompleted:
+        $ref: '#/components/messages/PayeeVerificationCompleted'
+    bindings:
+      kafka:
+        topic: evt.of.payee.v1
+        partitions: 6
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishPayeeVerificationCompleted:
+    action: send
+    title: Publish OpenFinance.PayeeVerification.VerificationCompleted.v1
+    summary: svc-of-payee-verification publishes OpenFinance.PayeeVerification.VerificationCompleted.v1 to evt.of.payee.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/payee'
+    messages:
+    - $ref: '#/channels/payee/messages/PayeeVerificationCompleted'
+components:
+  schemas:
+    EventEnvelope:
+      $ref: ./common/event-envelope.yaml#/EventEnvelope
+    PayeeVerificationCompletedData:
+      type: object
+      description: Payload of OpenFinance.PayeeVerification.VerificationCompleted.v1. Ids and facts only.
+      additionalProperties: false
+      properties:
+        verificationId:
+          type: string
+          format: uuid
+          description: Verification id (same as aggregateId).
+        tppId:
+          type: string
+          minLength: 1
+          description: OAuth client id of the TPP, taken from the access token (service-role tokens are refused).
+        accountReferenceHash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Lower-case hex SHA-256 of SCHEME:IDENTIFICATION (for example IBAN:AE070331234567890123456).
+        outcome:
+          type: string
+          enum:
+          - MATCH
+          - CLOSE_MATCH
+          - NO_MATCH
+          - UNABLE_TO_CHECK
+        reasonCode:
+          type: string
+          enum:
+          - EXACT_NAME_MATCH
+          - CLOSE_NAME_MATCH
+          - NAME_MISMATCH
+          - ACCOUNT_NOT_FOUND
+          - ACCOUNT_CLOSED
+          - ACCOUNT_DECEASED
+        occurredAt:
+          type: string
+          format: date-time
+      required:
+      - verificationId
+      - tppId
+      - accountReferenceHash
+      - outcome
+      - reasonCode
+      - occurredAt
+  messages:
+    PayeeVerificationCompleted:
+      name: PayeeVerificationCompleted
+      title: OpenFinance.PayeeVerification.VerificationCompleted.v1
+      summary: A Confirmation of Payee decision was recorded.
+      contentType: application/json
+      headers:
+        allOf:
+        - $ref: ./common/event-envelope.yaml#/EventHeaders
+        - type: object
+          properties:
+            eventType:
+              const: OpenFinance.PayeeVerification.VerificationCompleted.v1
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: OpenFinance.PayeeVerification.VerificationCompleted.v1
+            producer:
+              const: svc-of-payee-verification
+            data:
+              $ref: '#/components/schemas/PayeeVerificationCompletedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (verificationId).
+          bindingVersion: 0.5.0
+      examples:
+      - name: closeMatch
+        summary: A close match recorded for a TPP.
+        payload:
+          eventId: 3f1d2c4b-5a6e-4f70-8a9b-0c1d2e3f4a5b
+          eventType: OpenFinance.PayeeVerification.VerificationCompleted.v1
+          occurredAt: '2026-10-08T09:30:00Z'
+          aggregateId: 7f0c3c1e-4b8e-4d2a-9a51-0c1d2e3f4a5b
+          aggregateVersion: 0
+          correlationId: 5b8e0a52-1f3c-4d55-9d2e-6a7b8c9d0e1f
+          causationId: null
+          producer: svc-of-payee-verification
+          data:
+            verificationId: 7f0c3c1e-4b8e-4d2a-9a51-0c1d2e3f4a5b
+            tppId: tpp-alpha
+            accountReferenceHash: b538b8430ce7c538678b8dd357195baa7651210e6a4462655e5dd941afefcd15
+            outcome: CLOSE_MATCH
+            reasonCode: CLOSE_NAME_MATCH
+            occurredAt: '2026-10-08T09:30:00Z'
+      x-source-class: com.enterprise.openfinance.payeeverification.domain.event.PayeeVerificationCompleted
+  securitySchemes:
+    mskIam:
+      type: userPassword
+      description: SASL_SSL with SASL mechanism AWS_MSK_IAM. There is no user or password; the client signs with the
+        AWS credentials of its IRSA role, and a topic-scoped IAM policy (terraform module msk-client-access) grants
+        produce or consume rights. AsyncAPI has no IAM scheme type, so userPassword stands for the SASL family.
+      x-sasl-mechanism: AWS_MSK_IAM
+    mtls:
+      type: X509
+      description: Mutual TLS with Strimzi-issued client certificates (local and non-AWS clusters only).

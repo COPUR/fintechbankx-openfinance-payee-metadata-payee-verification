@@ -1,0 +1,89 @@
+package com.enterprise.openfinance.payeeverification.infrastructure.security;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpHeaders;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.net.URI;
+
+/**
+ * Requires a DPoP-bound access token and a valid DPoP proof on the
+ * TPP-facing API (platform contract, FAPI 2.0) for every caller. No internal
+ * service calls this API, so there is no exemption: a token carrying the
+ * realm role {@code service} is refused with 403 even when it is DPoP-bound.
+ */
+public class DpopEnforcementFilter extends OncePerRequestFilter {
+
+    private static final String PROTECTED_PREFIX = "/open-finance/";
+
+    private final DpopProofValidator validator;
+    private final SecurityErrorWriter errors;
+
+    public DpopEnforcementFilter(DpopProofValidator validator, SecurityErrorWriter errors) {
+        this.validator = validator;
+        this.errors = errors;
+    }
+
+    /**
+     * Decides on the decoded path, the one Spring MVC routes on: testing the raw URI
+     * would let /open-financ%65/... reach the controller without DPoP. A path that
+     * does not decode is filtered (fail closed).
+     */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path;
+        try {
+            path = URI.create("http://localhost" + request.getRequestURI()).getPath();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        return path != null && !path.startsWith(PROTECTED_PREFIX);
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+        throws ServletException, IOException {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (!(authentication instanceof JwtAuthenticationToken token)) {
+            chain.doFilter(request, response);
+            return;
+        }
+        Jwt jwt = token.getToken();
+        String boundJkt = TppIdentity.boundJkt(jwt);
+        String proof = request.getHeader("DPoP");
+        if (proof == null || proof.isBlank()) {
+            errors.unauthorized(request, response, "AUTH_HEADER_MISSING", "Missing required header: DPoP", "invalid_dpop_proof");
+            return;
+        }
+        if (TppIdentity.isInternalService(jwt)) {
+            errors.write(request, response, HttpServletResponse.SC_FORBIDDEN, "SERVICE_TOKEN_NOT_ALLOWED",
+                "Internal service tokens are not accepted on the TPP API");
+            return;
+        }
+        if (boundJkt == null) {
+            errors.unauthorized(request, response, "INVALID_DPOP_PROOF", "Access token is not DPoP-bound (cnf.jkt missing)", "invalid_token");
+            return;
+        }
+        String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (authorization == null || !DpopOrBearerTokenResolver.DPOP_SCHEME.equals(DpopOrBearerTokenResolver.scheme(authorization))) {
+            errors.unauthorized(request, response, "INVALID_DPOP_PROOF", "DPoP-bound token must use the DPoP authorization scheme", "invalid_token");
+            return;
+        }
+        try {
+            validator.validate(proof, request.getMethod(), request.getRequestURI(),
+                jwt.getTokenValue(), boundJkt);
+        } catch (DpopValidationException e) {
+            errors.unauthorized(request, response, "INVALID_DPOP_PROOF", e.getMessage(), "invalid_dpop_proof");
+            return;
+        }
+        chain.doFilter(request, response);
+    }
+}

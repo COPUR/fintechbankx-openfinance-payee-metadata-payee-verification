@@ -1,0 +1,35 @@
+{{- /*
+An empty env var defeats the ${VAR:default} in application.yml (Spring sees ""), so
+settings the service cannot run without must be set, and empty values are not rendered.
+*/ -}}
+{{- $c := .Values.config }}
+{{- $_ := required "config.DB_URL is required (terraform output jdbc_url)" $c.DB_URL }}
+{{- /* Aurora's certificate is verified against the platform RDS CA bundle (platform contract,
+       Database CA bundle); the URL is parsed strictly and nothing else in config may reach
+       the datasource (_helpers.tpl). */}}
+{{- $root := printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key }}
+{{- include "payee.strictJdbcUrl" (dict "key" "DB_URL" "url" $c.DB_URL "root" $root) }}
+{{- include "payee.refuseDatasourceOverrides" (dict "config" $c "urlKeys" (list "DB_URL")) }}
+{{- include "payee.refuseConfigOverrides" (dict "config" $c "extraEnv" .Values.extraEnv) }}
+{{- $_ := required "config.OIDC_ISSUER_URI is required (https://<identity-host>/realms/fintechbankx)" $c.OIDC_ISSUER_URI }}
+{{- $_ := required "config.OIDC_JWK_SET_URI is required (<issuer>/protocol/openid-connect/certs)" $c.OIDC_JWK_SET_URI }}
+{{- $_ := required "config.OIDC_AUDIENCE is required" $c.OIDC_AUDIENCE }}
+{{- $_ := required "config.DPOP_PUBLIC_BASE_URL is required (public gateway origin TPPs sign in DPoP htu)" $c.DPOP_PUBLIC_BASE_URL }}
+{{- if eq (toString $c.OUTBOX_RELAY_ENABLED) "true" }}
+{{- $_ := required "config.KAFKA_BOOTSTRAP_SERVERS is required when OUTBOX_RELAY_ENABLED is true" $c.KAFKA_BOOTSTRAP_SERVERS }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "payee.name" . }}
+  namespace: {{ include "payee.namespace" . }}
+  labels:
+    {{- include "payee.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := $c }}
+  {{- if not (kindIs "invalid" $value) }}
+  {{- if ne (toString $value) "" }}
+  {{ $key | quote }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}

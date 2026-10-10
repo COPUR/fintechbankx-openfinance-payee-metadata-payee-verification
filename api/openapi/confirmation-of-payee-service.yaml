@@ -1,8 +1,15 @@
 openapi: 3.0.3
 info:
   title: Confirmation of Payee Verification Service API
-  version: 0.1.0
-  description: API to verify that payee details match the beneficiary account before payment initiation.
+  version: 0.2.0
+  description: >-
+    API to verify that payee details match the beneficiary account before
+    payment initiation. Every decision is recorded (without names) and
+    published as OpenFinance.PayeeVerification.VerificationCompleted.v1 (see
+    api/asyncapi/svc-of-payee-verification.yaml). The holder name is returned
+    only for a CloseMatch. An account that is unknown is reported as Closed.
+    A repeated request with the same X-FAPI-Interaction-ID from the same TPP
+    returns the stored decision; reusing it for another account is a 409.
 servers:
   - url: https://api.example.com/open-finance/v1
 paths:
@@ -29,7 +36,7 @@ paths:
               match:
                 value:
                   Data:
-                    Identification: AE29000000123456789
+                    Identification: AE280330000000123456789
                     SchemeName: IBAN
                     Name: Al Tareq Trading LLC
       responses:
@@ -49,13 +56,13 @@ paths:
                     Data:
                       AccountStatus: Active
                       NameMatched: Match
-                      MatchedName: Al Tareq Trading LLC
+                      MatchedName: null
                 closeMatch:
                   value:
                     Data:
                       AccountStatus: Active
                       NameMatched: CloseMatch
-                      MatchedName: Al Tareq Trading
+                      MatchedName: Al Tareq Trading LLC
                 noMatch:
                   value:
                     Data:
@@ -63,7 +70,9 @@ paths:
                       NameMatched: NoMatch
                       MatchedName: null
         '400':
-          description: Invalid request
+          description: >-
+            Invalid request: missing or blank X-FAPI-Interaction-ID, a body that is
+            not valid JSON for this operation, or missing or invalid fields.
           content:
             application/json:
               schema:
@@ -76,6 +85,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: X-FAPI-Interaction-ID was already used by this TPP for a different account
           content:
             application/json:
               schema:
@@ -109,21 +124,28 @@ components:
       required: true
       schema:
         type: string
-      description: Bearer or DPoP access token
+      description: >-
+        DPoP-bound access token (`DPoP <token>`, RFC 9449) issued by the
+        fintechbankx realm with svc-of-payee-verification in aud. The TPP is
+        identified from the token, never from the body.
     DPoP:
       name: DPoP
       in: header
       required: true
       schema:
         type: string
-      description: DPoP proof JWT
+      description: >-
+        DPoP proof JWT (typ dpop+jwt, ES256/PS256/RS256) whose key matches the
+        token's cnf.jkt, with htm, htu, iat, a single-use jti and ath.
     InteractionId:
       name: X-FAPI-Interaction-ID
       in: header
       required: true
       schema:
         type: string
-      description: Correlation identifier
+      description: >-
+        Correlation identifier (at most 128 characters). Also the idempotency
+        key of the request within the calling TPP.
   schemas:
     ConfirmationRequest:
       type: object
@@ -139,7 +161,7 @@ components:
           properties:
             Identification:
               type: string
-              example: AE29000000123456789
+              example: AE280330000000123456789
             SchemeName:
               type: string
               example: IBAN

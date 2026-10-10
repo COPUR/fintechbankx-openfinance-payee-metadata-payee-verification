@@ -1,3 +1,18 @@
 /build/
 /.gradle/
 /out/
+# Hexagonal port packages are named "out"; never ignore source directories.
+!**/src/**/out/
+*.iml
+.idea/
+
+# Terraform working files
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+
+# yaml for scripts/ci/asyncapi-breaking.mjs (installed by scripts/ci/asyncapi-gate.sh)
+/node_modules/
+/rendered.yaml
+/tls.err

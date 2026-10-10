@@ -1,0 +1,3 @@
+# Accepted AsyncAPI breaking-change waivers need a data-contracts owner's review
+# (cicd-templates 13d09a1 requires this entry).
+**/*.accepted-breaking.txt @COPUR
