@@ -231,17 +231,14 @@ identifiers or messages:
 | `outbox_parked_rows` | gauge: rows parked right now (relay or operator; formerly the gauge `outbox_parked_events`) |
 | `outbox_parked_events_total{exception=...}` | counter, one increment per parked row: the payload error class, or `OperatorPark` for a park by `park_outbox_event` (counted once by the relay on its next run, column `park_counted`, V8) |
 
-Alerts:
+Alerts. The three alerts are platform rules for every relay, routed by squad
+with namespace fallback; this service ships no outbox alert rule of its own.
 
-- **Page the owning squad** when `outbox_oldest_pending_age_seconds` is above
-  900 (15 minutes) for 5 minutes: the relay is stuck on a row. Look at
-  `outbox_send_failures_total` by `exception` and the relay's WARN log (event
-  id and exception class), then fix the cause (topic ACL, credentials, broker,
-  topic missing from the catalog). The relay resumes by itself.
-- Parked rows: the platform alert **`OutboxEventsParked`** (any increase of
-  `outbox_parked_events_total` over 15 minutes, warning, routed by squad with
-  namespace fallback) covers them; this service ships no parked alert rule.
-  `exception` names a payload error the code must fix, or `OperatorPark`.
+| Alert | Severity | Condition | Action |
+|---|---|---|---|
+| **`OutboxRelayStalled`** | critical (pages the owning squad) | `max(outbox_oldest_pending_age_seconds) > 900` for 5 minutes | The relay is stuck on a row. Look at `outbox_send_failures_total` by `exception` and the relay's WARN log (event id and exception class), then fix the cause (topic ACL, credentials, broker, topic missing from the catalog). The relay resumes by itself |
+| **`OutboxSendFailures`** | warning | any increase over 10 minutes (`increase(outbox_send_failures_total[10m]) > 0`) | Sends are failing and being retried; the tag is the exception class only. Read it with the age alert |
+| **`OutboxEventsParked`** | warning | any increase of `outbox_parked_events_total` over 15 minutes | `exception` names a payload error the code must fix, or `OperatorPark` |
 
 Parking by hand: only an operator may park a row the relay keeps retrying,
 once the squad has decided the event will not be sent. Run as the ops role
