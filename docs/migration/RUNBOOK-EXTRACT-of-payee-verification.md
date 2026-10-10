@@ -71,6 +71,15 @@ into `svc-of-payee-verification` (this repository). Status: Proposed.
    configmap rds-ca-bundle` exists (platform trust-manager); without it the pod
    stays in ContainerCreating. The `migrate` init container applies the
    migrations and exits; the service container starts with Flyway off.
+
+   Selector labels: the pod and every selector (Deployment, Service, PDB,
+   topology spread, NetworkPolicy) carry `app.kubernetes.io/component=service`
+   (platform convention). A Deployment's `spec.selector` is immutable. No
+   release of this chart is installed yet, so the first install has the final
+   selector. Any release installed with an earlier chart would fail to upgrade
+   (`field is immutable`); delete its Deployment
+   (`kubectl -n open-finance delete deployment payee-verification-service`,
+   during a window: the pods go with it) and run the upgrade again.
 4. Import the directory as `payee_verification_import`
    (`PGUSER=payee_verification_import db/import/import-payee-directory.sh <export.csv>`).
    Every change is recorded in `payee_directory_entry_history`.

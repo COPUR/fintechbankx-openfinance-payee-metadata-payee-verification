@@ -51,7 +51,13 @@ is not evidence that anything is deployed or compliant.
   to the gateway and Prometheus, and egress to DNS, istiod, OTel,
   PostgreSQL, Kafka and 443.
 - Pods: non-root, read-only root filesystem, all capabilities dropped,
-  RuntimeDefault seccomp.
+  RuntimeDefault seccomp. The serving pod carries
+  `app.kubernetes.io/component=service`, and every selector (Deployment,
+  Service, PDB, topology spread, NetworkPolicy) includes it. Flyway runs as the
+  `migrate` init container of that pod, before the service container starts,
+  so there is no db-migration Job, no hook and no separate Job NetworkPolicy.
+  The platform confirmed that an init-container migration needs no Job and that
+  component=service on the serving pod is enough (2026-10-10).
 - Data in transit: `rds.force_ssl` on Aurora, and every JDBC URL uses
   `sslmode=verify-full` against the platform RDS CA bundle (ConfigMap
   `rds-ca-bundle`, mounted read-only at `/etc/fintechbankx/rds-ca` in the
