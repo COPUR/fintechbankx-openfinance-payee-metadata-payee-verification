@@ -56,7 +56,9 @@ kafka:
 # parsed strictly (exactly one sslmode=verify-full and one sslrootcert, no other ssl* key or
 # service), and no spring.datasource.* or spring.flyway.* key (except
 # SPRING_DATASOURCE_USERNAME), other jdbc: value or JVM options with JDBC, TLS or Spring
-# properties may be set here.
+# properties may be set here. SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION,
+# SPRING_CONFIG_ADDITIONAL_LOCATION, SPRING_APPLICATION_JSON and SPRING_PROFILES_* are
+# chart-rendered only, and any extraEnv fails the render: this chart renders none.
 config:
   # required: deploy/terraform output jdbc_url. It must verify Aurora's certificate against
   # databaseCaBundle; rendering fails otherwise:

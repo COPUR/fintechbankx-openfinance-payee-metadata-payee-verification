@@ -133,3 +133,31 @@ Arguments: dict "config" (.Values.config), "urlKeys" (keys parsed by payee.stric
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+No configuration import or profile override from values (round 5):
+- config.* must not set SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION,
+  SPRING_CONFIG_ADDITIONAL_LOCATION (any spring.config.* spelling),
+  SPRING_APPLICATION_JSON or SPRING_PROFILES_*: they can load another configuration,
+  datasource included, or drop the profile that runs the startup TLS assertion.
+  A configtree is allowed only as a chart-rendered value on
+  optional:configtree:/etc/fintechbankx/config/; this chart renders none.
+- extraEnv: the chart renders none, so a value there would be silently ignored;
+  it is refused, and settings go through config.* (checked above) instead.
+Arguments: dict "config" (.Values.config), "extraEnv" (.Values.extraEnv).
+*/}}
+{{- define "payee.refuseConfigOverrides" -}}
+{{- range $key, $value := .config -}}
+{{- $norm := regexReplaceAll "[._-]" (lower $key) "" -}}
+{{- if or (hasPrefix "springconfig" $norm) (eq $norm "springapplicationjson") (hasPrefix "springprofiles" $norm) -}}
+{{- fail (printf "config.%s is refused: configuration imports and locations (SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION, SPRING_CONFIG_ADDITIONAL_LOCATION), SPRING_APPLICATION_JSON and the active profiles are chart-rendered only (a configtree only as optional:configtree:/etc/fintechbankx/config/)" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- with .extraEnv -}}
+{{- $names := list -}}
+{{- range $entry := . -}}
+{{- $names = append $names (toString (get $entry "name")) -}}
+{{- end -}}
+{{- fail (printf "extraEnv is refused (%s): this chart renders no extraEnv; non-secret settings go in config.*, which is checked, and SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION and SPRING_CONFIG_ADDITIONAL_LOCATION are never accepted" (join ", " $names)) -}}
+{{- end -}}
+{{- end -}}

@@ -10,6 +10,7 @@ settings the service cannot run without must be set, and empty values are not re
 {{- $root := printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key }}
 {{- include "payee.strictJdbcUrl" (dict "key" "DB_URL" "url" $c.DB_URL "root" $root) }}
 {{- include "payee.refuseDatasourceOverrides" (dict "config" $c "urlKeys" (list "DB_URL")) }}
+{{- include "payee.refuseConfigOverrides" (dict "config" $c "extraEnv" .Values.extraEnv) }}
 {{- $_ := required "config.OIDC_ISSUER_URI is required (https://<identity-host>/realms/fintechbankx)" $c.OIDC_ISSUER_URI }}
 {{- $_ := required "config.OIDC_JWK_SET_URI is required (<issuer>/protocol/openid-connect/certs)" $c.OIDC_JWK_SET_URI }}
 {{- $_ := required "config.OIDC_AUDIENCE is required" $c.OIDC_AUDIENCE }}
