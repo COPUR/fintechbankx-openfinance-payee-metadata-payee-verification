@@ -4,11 +4,12 @@ settings the service cannot run without must be set, and empty values are not re
 */ -}}
 {{- $c := .Values.config }}
 {{- $_ := required "config.DB_URL is required (terraform output jdbc_url)" $c.DB_URL }}
-{{- /* Aurora's certificate is verified against the platform RDS CA bundle (platform contract, Database CA bundle). */}}
-{{- $ca := printf "sslrootcert=%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key }}
-{{- if not (and (regexMatch "[?&]sslmode=verify-full(&|$)" $c.DB_URL) (regexMatch (printf "[?&]%s(&|$)" (regexQuoteMeta $ca)) $c.DB_URL)) }}
-{{- fail (printf "config.DB_URL must use sslmode=verify-full&%s (deploy/terraform output jdbc_url)" $ca) }}
-{{- end }}
+{{- /* Aurora's certificate is verified against the platform RDS CA bundle (platform contract,
+       Database CA bundle); the URL is parsed strictly and nothing else in config may reach
+       the datasource (_helpers.tpl). */}}
+{{- $root := printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key }}
+{{- include "payee.strictJdbcUrl" (dict "key" "DB_URL" "url" $c.DB_URL "root" $root) }}
+{{- include "payee.refuseDatasourceOverrides" (dict "config" $c "urlKeys" (list "DB_URL")) }}
 {{- $_ := required "config.OIDC_ISSUER_URI is required (https://<identity-host>/realms/fintechbankx)" $c.OIDC_ISSUER_URI }}
 {{- $_ := required "config.OIDC_JWK_SET_URI is required (<issuer>/protocol/openid-connect/certs)" $c.OIDC_JWK_SET_URI }}
 {{- $_ := required "config.OIDC_AUDIENCE is required" $c.OIDC_AUDIENCE }}
