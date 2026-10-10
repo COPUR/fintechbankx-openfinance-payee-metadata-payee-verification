@@ -31,7 +31,7 @@ class PayeeVerificationEventEnvelopeFactoryTest {
         OutboxEventJpaEntity row = factory.toOutboxRow(new PayeeVerificationCompleted(ID, "tpp-alpha", "ix-1", HASH,
             MatchOutcome.CLOSE_MATCH, VerificationReasonCode.CLOSE_NAME_MATCH, AT));
 
-        assertThat(row.getTopic()).isEqualTo("evt.of.payee.verification-completed.v1");
+        assertThat(row.getTopic()).as("one topic per aggregate (ADR-019)").isEqualTo("evt.of.payee.v1");
         assertThat(row.getEventType()).isEqualTo("OpenFinance.PayeeVerification.VerificationCompleted.v1");
         assertThat(row.getAggregateType()).isEqualTo("PayeeVerification");
         assertThat(row.getAggregateId()).isEqualTo(ID.toString());

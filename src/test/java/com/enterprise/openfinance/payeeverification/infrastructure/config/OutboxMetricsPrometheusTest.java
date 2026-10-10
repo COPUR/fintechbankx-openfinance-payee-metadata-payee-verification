@@ -55,7 +55,7 @@ class OutboxMetricsPrometheusTest {
         when(outbox.tryRelayLock(anyLong())).thenReturn(true);
         when(outbox.findUnpublishedBatch(anyInt())).thenReturn(List.of(new OutboxEventJpaEntity(UUID.randomUUID(),
             "PayeeVerification", "VER-1", 0L, "OpenFinance.PayeeVerification.VerificationCompleted.v1",
-            "evt.of.payee.verification-completed.v1", "{}", "corr-1", NOW)));
+            "evt.of.payee.v1", "{}", "corr-1", NOW)));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
             new KafkaProducerException(null, "Failed to send", new RecordTooLargeException("2000000 bytes"))));
 

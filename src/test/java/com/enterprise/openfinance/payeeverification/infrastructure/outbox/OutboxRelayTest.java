@@ -85,7 +85,7 @@ class OutboxRelayTest {
         OutboxEventJpaEntity second = row("VER-2");
         batch(first, second);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(failed(
-            new TopicAuthorizationException("Not authorized to access topics: [evt.of.payee.verification-completed.v1]")));
+            new TopicAuthorizationException("Not authorized to access topics: [evt.of.payee.v1]")));
 
         assertThat(relay.relayOnce()).isZero();
 
@@ -132,7 +132,7 @@ class OutboxRelayTest {
         batch(first, second);
         RuntimeException cause = error.equals("TimeoutException")
             ? new TimeoutException("Expiring 1 record(s)")
-            : new org.apache.kafka.common.errors.UnknownTopicOrPartitionException("evt.of.payee.verification-completed.v1");
+            : new org.apache.kafka.common.errors.UnknownTopicOrPartitionException("evt.of.payee.v1");
         when(kafka.send(any(ProducerRecord.class))).thenReturn(failed(cause));
 
         assertThat(relay.relayOnce()).isZero();
@@ -258,7 +258,7 @@ class OutboxRelayTest {
     void theFailureCounterIsTaggedByExceptionClassOnly() {
         batch(row("VER-1"));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(failed(
-            new TopicAuthorizationException("Not authorized to access topics: [evt.of.payee.verification-completed.v1]")));
+            new TopicAuthorizationException("Not authorized to access topics: [evt.of.payee.v1]")));
 
         relay.relayOnce();
 
@@ -272,12 +272,33 @@ class OutboxRelayTest {
 
         ProducerRecord<String, String> record = OutboxRelay.toRecord(row);
 
-        assertThat(record.topic()).isEqualTo("evt.of.payee.verification-completed.v1");
+        assertThat(record.topic()).isEqualTo("evt.of.payee.v1");
         assertThat(record.key()).isEqualTo("VER-9");
         assertThat(record.value()).isEqualTo("{}");
         assertThat(header(record, "eventType")).isEqualTo("OpenFinance.PayeeVerification.VerificationCompleted.v1");
         assertThat(header(record, "eventId")).isEqualTo(row.getEventId().toString());
         assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("corr-9");
+    }
+
+    @Test
+    void aFactoryRowGoesToTheAggregateTopicKeyedByVerificationIdWithTheRequiredTextHeaders() throws Exception {
+        PayeeVerificationEventEnvelopeFactory factory =
+            new PayeeVerificationEventEnvelopeFactory(new com.fasterxml.jackson.databind.ObjectMapper());
+        UUID verificationId = UUID.fromString("7f6c1a52-1d7e-4f3c-9a51-0c2b8d4e6f10");
+        OutboxEventJpaEntity stored = factory.toOutboxRow(new com.enterprise.openfinance.payeeverification.domain.event.PayeeVerificationCompleted(
+            verificationId, "tpp-alpha", "ix-agg", "a".repeat(64),
+            com.enterprise.openfinance.payeeverification.domain.model.MatchOutcome.MATCH,
+            com.enterprise.openfinance.payeeverification.domain.model.VerificationReasonCode.EXACT_NAME_MATCH, NOW));
+
+        ProducerRecord<String, String> record = OutboxRelay.toRecord(stored);
+
+        com.fasterxml.jackson.databind.JsonNode envelope = new com.fasterxml.jackson.databind.ObjectMapper().readTree(record.value());
+        assertThat(record.topic()).isEqualTo("evt.of.payee.v1");
+        assertThat(record.key()).isEqualTo(verificationId.toString()).isEqualTo(envelope.path("aggregateId").asText());
+        assertThat(header(record, "eventType")).isEqualTo(envelope.path("eventType").asText())
+            .isEqualTo("OpenFinance.PayeeVerification.VerificationCompleted.v1");
+        assertThat(header(record, "eventId")).isEqualTo(envelope.path("eventId").asText());
+        assertThat(header(record, "correlationId")).isEqualTo(envelope.path("correlationId").asText()).isEqualTo("ix-agg");
     }
 
     @Test
@@ -347,7 +368,7 @@ class OutboxRelayTest {
 
     private static OutboxEventJpaEntity row(String aggregateId) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "PayeeVerification", aggregateId, 0L,
-            "OpenFinance.PayeeVerification.VerificationCompleted.v1", "evt.of.payee.verification-completed.v1", "{}", "corr-9", NOW);
+            "OpenFinance.PayeeVerification.VerificationCompleted.v1", "evt.of.payee.v1", "{}", "corr-9", NOW);
     }
 
     private static TransactionTemplate inlineTransactions() {

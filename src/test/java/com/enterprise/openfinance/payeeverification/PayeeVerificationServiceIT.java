@@ -263,6 +263,16 @@ class PayeeVerificationServiceIT {
     }
 
     @Test
+    void anUnpublishedOutboxRowGoesOnlyToThePayeeAggregateTopic() {
+        String insert = "insert into " + SCHEMA + ".outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, "
+            + "event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, "
+            + "'OpenFinance.PayeeVerification.VerificationCompleted.v1', ?, '{}'::jsonb, 'ix-topic', now())";
+        assertThatThrownBy(() -> jdbc.update(insert, "evt.of.payee.verification-completed.v1"))
+            .hasMessageContaining("ck_outbox_aggregate_topic");
+        jdbc.update(insert, "evt.of.payee.v1");
+    }
+
+    @Test
     void decisionsAreInsertOnly() {
         useCase.verify(new VerifyPayeeCommand(AccountReference.of("SAMPLE", TAREQ_ID), "Al Tareq Trading LLC",
             "tpp-alpha", "it-ix-update"));
@@ -284,7 +294,7 @@ class PayeeVerificationServiceIT {
 
         ArgumentCaptor<ProducerRecord<String, String>> record = ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(record.capture());
-        assertThat(record.getValue().topic()).isEqualTo("evt.of.payee.verification-completed.v1");
+        assertThat(record.getValue().topic()).isEqualTo("evt.of.payee.v1");
         assertThat(record.getValue().key()).isEqualTo(result.verification().verificationId().toString());
         assertThat(outbox.countByPublishedAtIsNull()).isZero();
     }
