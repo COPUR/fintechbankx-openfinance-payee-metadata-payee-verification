@@ -6,31 +6,28 @@ import org.springframework.core.env.Environment;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.function.Function;
 
 /**
  * Checks the effective connection pool, not only the properties: after
  * spring.datasource.hikari.* is bound onto the HikariDataSource and before the pool opens
  * (it opens on the first getConnection), its jdbcUrl must pass {@link JdbcTlsUrlPolicy},
  * no data-source property may touch TLS (ssl*, service), and no dataSourceClassName or
- * DataSource may replace the URL (Hikari would ignore jdbcUrl, sslmode included). Active
- * under the same condition as {@link AwsTransportSecurityConfiguration}: the deployment
- * marker or the aws profile.
+ * DataSource may replace the URL (Hikari would ignore jdbcUrl, sslmode included). On under
+ * the same switch as {@link AwsTransportSecurityConfiguration}: always, unless
+ * fintechbankx.tls.enforce is false (local profile and tests only).
  */
 final class HikariPoolTlsAssertion implements BeanPostProcessor {
 
     private final Environment environment;
-    private final Function<String, String> processEnvironment;
 
-    HikariPoolTlsAssertion(Environment environment, Function<String, String> processEnvironment) {
+    HikariPoolTlsAssertion(Environment environment) {
         this.environment = environment;
-        this.processEnvironment = processEnvironment;
     }
 
     @Override
     public Object postProcessAfterInitialization(Object bean, String beanName) {
         if (bean instanceof HikariDataSource pool
-                && AwsTransportSecurityConfiguration.enforced(environment, processEnvironment)) {
+                && AwsTransportSecurityConfiguration.enforced(environment)) {
             String where = "DataSource " + beanName;
             if (pool.getDataSourceClassName() != null || pool.getDataSource() != null) {
                 throw new IllegalStateException(where + " must connect through its verified jdbcUrl, not a"

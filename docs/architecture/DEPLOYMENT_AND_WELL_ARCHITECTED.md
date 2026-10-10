@@ -62,7 +62,14 @@ is not evidence that anything is deployed or compliant.
   `sslmode=verify-full` against the platform RDS CA bundle (ConfigMap
   `rds-ca-bundle`, mounted read-only at `/etc/fintechbankx/rds-ca` in the
   `migrate` init container and the service container); the chart refuses to
-  render any other `config.DB_URL`.
+  render any other `config.DB_URL`. A startup TLS assertion that is on by default
+  (guardrail 4a, single form, as loan-lifecycle-core `TlsEnforcement`) checks
+  every JDBC URL, the effective Hikari pool and, whenever Kafka is in use, the
+  Kafka protocol before anything connects, in both containers.
+  `fintechbankx.tls.enforce` is true in `application.yml`; only the `local`
+  profile and the test resources set it false, and the chart refuses the key,
+  every profile name and the JVM options that could carry them. No profile or
+  deployment marker is involved.
 - Data: KMS-encrypted Aurora, snapshots, logs and Secrets Manager secrets.
   Four database roles (`db/bootstrap/bootstrap-roles.sql`): the service runs
   as `payee_verification_app` (`db-app`; SELECT on the directory, SELECT/INSERT

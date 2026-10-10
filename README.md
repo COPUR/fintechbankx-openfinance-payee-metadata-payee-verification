@@ -85,6 +85,7 @@ and fail in CI (`CI=true` or `JENKINS_URL` set).
 Run locally against PostgreSQL with the sample directory:
 
 ```bash
+SPRING_PROFILES_ACTIVE=local \
 DB_URL=jdbc:postgresql://localhost:5432/db_of_payee_verification_local DB_USERNAME=<user> \
 SPRING_DATASOURCE_PASSWORD=<pw> PAYEE_DIRECTORY_SEED_ENABLED=true \
 DPOP_PUBLIC_BASE_URL=http://localhost:8080 \
@@ -92,7 +93,10 @@ OIDC_ISSUER_URI=<issuer> OIDC_JWK_SET_URI=<jwks> ./gradlew bootRun
 ```
 
 `DPOP_PUBLIC_BASE_URL` is required (no default): the service refuses to start
-without it. The outbox relay is off unless `OUTBOX_RELAY_ENABLED=true`.
+without it. The startup TLS assertion is on by default (`fintechbankx.tls.enforce`:
+every JDBC URL `sslmode=verify-full` with the RDS CA bundle, Kafka `SASL_SSL` or
+`SSL` whenever it is in use); only the `local` profile and the test resources
+switch it off, and the chart refuses both. The outbox relay is off unless `OUTBOX_RELAY_ENABLED=true`.
 
 Outbox metrics: `outbox_pending_events`, `outbox_oldest_pending_age_seconds`
 (pages the squad), `outbox_send_failures_total{exception}`, gauge

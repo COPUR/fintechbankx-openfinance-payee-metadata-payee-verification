@@ -232,19 +232,21 @@ jobs:
             must_fail "extraEnv" --set "extraEnv[0].name=$key" --set "extraEnv[0].value=optional:configtree:/etc/fintechbankx/config/"
           done
           # Any suffix and spring.config.name (cicd-templates 2caa48f fbx.datasourceOverrideName),
-          # spring.kafka.* and spring.ssl.* (protocol, trust store, SSL bundles), and the chart-owned
-          # deployment marker FBX_DEPLOYED in any spelling. Keys go through a values file, so
-          # spring.config.import[0] stays one key.
+          # spring.kafka.* and spring.ssl.* (protocol, trust store, SSL bundles), and the startup TLS
+          # switch fintechbankx.tls.enforce in any spelling (only the local profile and tests set it).
+          # Keys go through a values file, so spring.config.import[0] stays one key.
           keys="$(mktemp -d)"
           for key in SPRING_CONFIG_IMPORT_0 "'spring.config.import[0]'" SPRING_CONFIG_LOCATION_0 SPRING_CONFIG_ADDITIONAL_LOCATION_0 \
                      SPRING_CONFIG_NAME spring.config.name SPRING_KAFKA_SECURITY_PROTOCOL spring.kafka.bootstrap-servers \
                      SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM SPRING_SSL_BUNDLE_PEM_RDS_TRUSTSTORE_CERTIFICATE \
-                     spring.ssl.bundle.jks.x.truststore.location FBX_DEPLOYED fbx.deployed Fbx-Deployed; do
+                     spring.ssl.bundle.jks.x.truststore.location FINTECHBANKX_TLS_ENFORCE \
+                     fintechbankx.tls.enforce Fintechbankx-Tls-Enforce FINTECHBANKX_TLS_ENFORCE_0; do
             v="$keys/$(printf 'config %s' "$key" | tr -c 'A-Za-z0-9._-' '_').yaml"
             printf 'config:\n  %s: x\n' "$key" > "$v"
             # The vendored guard renders first and refuses most of these with its own text;
-            # spring.kafka.bootstrap-servers and FBX_DEPLOYED are this chart's own rules.
+            # spring.kafka.bootstrap-servers is this chart's own rule.
             case "$key" in
+              *TLS*|*tls*|*Tls*) expect="switch off the service's startup TLS assertion" ;;
               SPRING_SSL_*|spring.ssl.*) expect="is not allowed: an SSL bundle property" ;;
               SPRING_KAFKA_SECURITY_PROTOCOL) expect="must be SASL_SSL or SSL" ;;
               *ENDPOINT_IDENTIFICATION_ALGORITHM) expect="must be https" ;;
@@ -255,6 +257,10 @@ jobs:
             v="$keys/$(printf 'extraEnv %s' "$key" | tr -c 'A-Za-z0-9._-' '_').yaml"
             printf 'extraEnv:\n  - name: %s\n    value: x\n' "$key" > "$v"
             must_fail "extraEnv" -f "$v"
+          done
+          # The switch as a JVM system property (the JVM reads these three; JAVA_OPTS is inert here).
+          for name in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS; do
+            must_fail "config.$name must not mention" --set-string "config.$name=-Dfintechbankx.tls.enforce=false"
           done
           for name in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS JAVA_OPTS; do
             v="$keys/extraEnv_${name}_valueFrom.yaml"
@@ -348,11 +354,11 @@ jobs:
           PY
           rm -rf "$work" guard.err
           exit $failed
-      - name: Pods run the aws profile with the mounted RDS CA bundle path (startup TLS assertion)
+      - name: Pods run the chart's profiles with the mounted RDS CA bundle path (startup TLS assertion)
         run: |
-          # AwsTransportSecurityConfiguration fails startup under the aws profile unless DB_URL
-          # verifies against DATABASE_CA_BUNDLE and Kafka, when in use, is SASL_SSL or SSL (never
-          # PLAINTEXT). The migrate init container runs aws alone with the relay off.
+          # AwsTransportSecurityConfiguration (on by default, fintechbankx.tls.enforce) fails startup
+          # unless DB_URL verifies against DATABASE_CA_BUNDLE and Kafka, when in use, is SASL_SSL or
+          # SSL (never PLAINTEXT). The migrate init container runs aws alone with the relay off.
           chart=deploy/helm/payee-verification-service
           for profile in kafka-msk kafka-strimzi; do
             helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES --set kafka.profile=$profile > profile.yaml
@@ -374,18 +380,20 @@ jobs:
           PY
           done
           rm -f profile.yaml
-      - name: Chart renders the deployment marker FBX_DEPLOYED=true on every container that runs the TLS assertion
+      - name: No rendered container or ConfigMap carries the startup TLS switch (on by default)
         run: |
-          # AwsTransportSecurityConfiguration is registered whatever the profiles; FBX_DEPLOYED makes it
-          # enforce (aws, kafka-msk or kafka-strimzi when the outbox relay is on, no local or test profile)
-          # on the migrate init container and the service container. Rendered directly, never from values.
+          # The startup TLS assertion checks every context unless fintechbankx.tls.enforce is false,
+          # which only application-local.yml and the test resources set. The chart renders no switch
+          # and no marker in any spelling; the guard refuses the key in config, extraEnv and JVM options.
           chart=deploy/helm/payee-verification-service
-          for profile in kafka-msk kafka-strimzi; do
-            helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES --set kafka.profile=$profile > marker.yaml
-            python3 - marker.yaml "Deployment/migrate,Deployment/payee-verification-service" <<'PY'
-          import sys, yaml
+          base="--set image.repository=ci/x --set image.tag=x $CI_VALUES"
+          for render in --set,kafka.profile=kafka-msk --set,kafka.profile=kafka-strimzi; do
+            helm template ci "$chart" $base ${render//,/ } > switch.yaml
+            python3 - switch.yaml "Deployment/migrate,Deployment/payee-verification-service" <<'PY'
+          import re, sys, yaml
           docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
           want = set(sys.argv[2].split(","))
+          switch = re.compile(r"fintechbankx[^a-z0-9]*tls", re.I)
           containers = []
           for d in docs:
               spec = None
@@ -397,15 +405,16 @@ jobs:
                   containers += [(f"{d['kind']}/{c['name']}", c) for c in spec.get("initContainers", []) + spec["containers"]]
           assert {w for w, _ in containers} == want, f"expected containers {sorted(want)}, got {sorted(w for w, _ in containers)}"
           for where, c in containers:
-              env = [e for e in c.get("env", []) if e["name"] == "FBX_DEPLOYED"]
-              assert env == [{"name": "FBX_DEPLOYED", "value": "true"}], f"{where} must set FBX_DEPLOYED=true once, as a literal, got {env}"
+              bad = [e for e in c.get("env", []) if switch.search(e["name"]) or switch.search(str(e.get("value", "")))]
+              assert not bad, f"{where} must not carry the TLS switch, got {bad}"
+              assert not switch.search(" ".join(map(str, c.get("args", []) + c.get("command", [])))), f"{where} args carry the TLS switch"
           for cm in (d for d in docs if d["kind"] == "ConfigMap"):
-              assert not [k for k in (cm.get("data") or {}) if "".join(ch for ch in k.upper() if ch.isalnum()) == "FBXDEPLOYED"], \
-                  f"ConfigMap {cm['metadata']['name']} must not carry FBX_DEPLOYED"
-          print("FBX_DEPLOYED=true on " + ", ".join(sorted(w for w, _ in containers)))
+              bad = [k for k, v in (cm.get("data") or {}).items() if switch.search(k) or switch.search(str(v))]
+              assert not bad, f"ConfigMap {cm['metadata']['name']} must not carry the TLS switch: {bad}"
+          print("no TLS switch on " + ", ".join(sorted(w for w, _ in containers)))
           PY
           done
-          rm -f marker.yaml
+          rm -f switch.yaml
       - name: Migrate init container and service container mount the platform RDS CA bundle
         run: |
           # ConfigMap rds-ca-bundle, key global-bundle.pem, published by trust-manager (platform contract).

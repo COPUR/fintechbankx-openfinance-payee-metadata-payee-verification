@@ -148,7 +148,8 @@ No configuration import or profile override from values (round 5):
 - config.* must not set SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION,
   SPRING_CONFIG_ADDITIONAL_LOCATION (any spring.config.* spelling),
   SPRING_APPLICATION_JSON or SPRING_PROFILES_*: they can load another configuration,
-  datasource included, or drop the profile that runs the startup TLS assertion.
+  datasource included, or activate the local profile that switches the startup TLS
+  assertion off.
   A configtree is allowed only as a chart-rendered value on
   optional:configtree:/etc/fintechbankx/config/; this chart renders none.
   Any suffix is refused too (SPRING_CONFIG_IMPORT_0, spring.config.import[0],
@@ -159,9 +160,6 @@ No configuration import or profile override from values (round 5):
   profile. spring.ssl.* (an SSL bundle could replace the trust anchors) is refused by the
   vendored guard ((?i)^spring[._-]?ssl([._-]|$) and any ssl[._-]?bundle name, a superset
   of the rule this chart had).
-- config.* must not set the deployment marker FBX_DEPLOYED in any spelling (name
-  normalising to FBXDEPLOYED): the chart renders FBX_DEPLOYED=true on every container
-  that runs the startup TLS assertion, never from values.
 - extraEnv: the chart renders none, so a value there would be silently ignored;
   it is refused, and settings go through config.* (checked above) instead.
 Arguments: dict "config" (.Values.config), "extraEnv" (.Values.extraEnv).
@@ -177,9 +175,6 @@ Arguments: dict "config" (.Values.config), "extraEnv" (.Values.extraEnv).
 {{- end -}}
 {{- if regexMatch "(?i)^spring[._-]?kafka[._-]" $key -}}
 {{- fail (printf "config.%s is refused: spring.kafka.* comes from application.yml and the kafka-* profile (it sets the Kafka security protocol and trust)" $key) -}}
-{{- end -}}
-{{- if eq (upper (regexReplaceAll "[^A-Za-z0-9]" (toString $key) "")) "FBXDEPLOYED" -}}
-{{- fail (printf "config.%s is refused: FBX_DEPLOYED is the chart-owned deployment marker that enforces the startup TLS assertion; values never set it" $key) -}}
 {{- end -}}
 {{- end -}}
 {{- with .extraEnv -}}

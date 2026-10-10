@@ -1,5 +1,7 @@
 package com.enterprise.openfinance.payeeverification.infrastructure.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
@@ -10,21 +12,17 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 
 /**
- * Startup TLS assertion. It runs under the aws profile (the chart renders
- * SPRING_PROFILES_ACTIVE=aws,kafka-* for the service container and aws for the migrate
- * init container) and whenever the chart-owned deployment marker FBX_DEPLOYED is in the
- * process environment (the chart renders it directly on both containers, never from
- * values, and refuses config.FBX_DEPLOYED), whatever the profiles. With the marker,
- * startup fails unless the aws profile is active, kafka-msk or kafka-strimzi is active
- * when the outbox relay is on, and no local or test profile is active. Then it fails unless
+ * Startup TLS assertion (guardrail 4a, single form: on by default). It runs in every
+ * context that is not explicitly local or test, the service container and the migrate
+ * init container alike: fintechbankx.tls.enforce is true in application.yml (and when
+ * unset), and only the local profile (application-local.yml) and the test resources
+ * (application.properties) set it false. The chart never sets it and refuses the key,
+ * every spring.profiles.* name and the JVM options that could carry them (vendored
+ * platform guard). No profile or deployment marker is needed. It fails startup unless
  * <ul>
  *   <li>spring.datasource.url, spring.datasource.hikari.jdbc-url and spring.flyway.url
  *       (when set) carry exactly one sslmode=verify-full and exactly one sslrootcert equal
@@ -36,84 +34,55 @@ import java.util.function.Function;
  *       certificate), whatever the Kafka profile; PLAINTEXT, SASL_PLAINTEXT and an unset
  *       protocol are refused, and no producer, consumer or admin client switches broker
  *       host name verification off (an empty or "none" ssl.endpoint.identification.algorithm).
- *       The migrate init container runs with the aws profile alone and the relay off: it
- *       never connects to Kafka, so only its database connection is checked.</li>
+ *       The migrate init container runs with the relay off and no Kafka profile: it never
+ *       connects to Kafka, so only its database connection is checked.</li>
  * </ul>
  * It runs as a BeanFactoryPostProcessor, before the DataSource, Flyway or a Kafka client
  * exists, so nothing connects with weaker settings first; {@link HikariPoolTlsAssertion}
- * then checks the effective pool after binding, before it opens. Without the marker and
- * the aws profile (tests, local runs) neither does anything.
+ * then checks the effective pool after binding, before it opens, under the same switch.
  */
 @Configuration(proxyBeanMethods = false)
 public class AwsTransportSecurityConfiguration {
 
-    static final String AWS_PROFILE = "aws";
+    /** The only switch; true unless local or test configuration says otherwise. */
+    public static final String ENFORCE_PROPERTY = "fintechbankx.tls.enforce";
     static final String CA_BUNDLE_PROPERTY = "openfinance.transport-security.database-ca-bundle";
     static final String DEFAULT_CA_BUNDLE = "/etc/fintechbankx/rds-ca/global-bundle.pem";
-
-    /** Rendered by the chart on every container that runs this assertion; read from the process environment only. */
-    static final String DEPLOYED_MARKER = "FBX_DEPLOYED";
-    static final List<String> KAFKA_PROFILES = List.of("kafka-msk", "kafka-strimzi");
-    /** Profiles for local runs and tests; never active in a deployment. */
-    static final Set<String> LOCAL_PROFILES = Set.of("local", "test");
     static final String RELAY_PROPERTY = "openfinance.outbox.relay.enabled";
     static final String ENDPOINT_IDENTIFICATION = "ssl.endpoint.identification.algorithm";
+    private static final String HOW_TO_RELAX = " (" + ENFORCE_PROPERTY
+            + " is true; only the local profile and the test resources set it false, the chart never does)";
 
     /** SASL_SSL: MSK with IAM. SSL: Strimzi mutual TLS. Anything else sends records in clear text. */
     static final Set<String> TLS_PROTOCOLS = Set.of("SASL_SSL", "SSL");
+    private static final Logger log = LoggerFactory.getLogger(AwsTransportSecurityConfiguration.class);
 
     @Bean
     static BeanFactoryPostProcessor awsTransportSecurityAssertion(Environment environment) {
-        return beanFactory -> enforce(environment, System::getenv);
+        return beanFactory -> enforce(environment);
     }
 
     @Bean
     static BeanPostProcessor awsHikariPoolTlsAssertion(Environment environment) {
-        return new HikariPoolTlsAssertion(environment, System::getenv);
+        return new HikariPoolTlsAssertion(environment);
     }
 
-    /**
-     * With the deployment marker in {@code processEnvironment}: requires the deployed profiles,
-     * then checks. Without it: checks under the aws profile only (unchanged).
-     */
-    static void enforce(Environment environment, Function<String, String> processEnvironment) {
-        if (isDeployed(processEnvironment)) {
-            requireDeployedProfiles(environment);
+    /** Checks unless {@value #ENFORCE_PROPERTY} is false. */
+    static void enforce(Environment environment) {
+        if (!enforced(environment)) {
+            log.warn("{} is false: the startup TLS assertions are off (local runs and tests only)", ENFORCE_PROPERTY);
+            return;
         }
-        if (enforced(environment, processEnvironment)) {
-            check(environment);
-        }
+        check(environment);
     }
 
-    /** Any value counts: the chart renders "true", and values can neither set nor clear it. */
-    static boolean isDeployed(Function<String, String> processEnvironment) {
-        return processEnvironment.apply(DEPLOYED_MARKER) != null;
-    }
-
-    static boolean enforced(Environment environment, Function<String, String> processEnvironment) {
-        return isDeployed(processEnvironment) || environment.acceptsProfiles(Profiles.of(AWS_PROFILE));
+    /** True unless the property says false; an unreadable value fails the start. */
+    static boolean enforced(Environment environment) {
+        return environment.getProperty(ENFORCE_PROPERTY, Boolean.class, true);
     }
 
     static String caBundle(Environment environment) {
         return Binder.get(environment).bind(CA_BUNDLE_PROPERTY, String.class).orElse(DEFAULT_CA_BUNDLE);
-    }
-
-    static void requireDeployedProfiles(Environment environment) {
-        List<String> active = Arrays.asList(environment.getActiveProfiles());
-        String hint = DEPLOYED_MARKER + " is set (chart-rendered deployment), so the active profiles must include "
-                + AWS_PROFILE + ", one of " + KAFKA_PROFILES + " when the outbox relay is on, and no local profile "
-                + LOCAL_PROFILES + "; active: " + active;
-        if (!active.contains(AWS_PROFILE)) {
-            throw new IllegalStateException(hint + " (the " + AWS_PROFILE + " profile is missing)");
-        }
-        boolean relay = Binder.get(environment).bind(RELAY_PROPERTY, Boolean.class).orElse(false);
-        if (relay && active.stream().noneMatch(KAFKA_PROFILES::contains)) {
-            throw new IllegalStateException(hint + " (the outbox relay is on without a kafka-msk or kafka-strimzi profile)");
-        }
-        active.stream().filter(profile -> LOCAL_PROFILES.contains(profile.toLowerCase(Locale.ROOT))).findFirst()
-                .ifPresent(profile -> {
-                    throw new IllegalStateException(hint + " (local profile " + profile + " is active)");
-                });
     }
 
     static void check(Environment environment) {
@@ -159,9 +128,9 @@ public class AwsTransportSecurityConfiguration {
     private static void requireProtocol(String client, Map<String, Object> properties) {
         Object protocol = properties.get("security.protocol");
         if (protocol == null || !TLS_PROTOCOLS.contains(protocol.toString())) {
-            throw new IllegalStateException("Kafka " + client + " security.protocol must be SASL_SSL or SSL"
-                    + " under the aws profile, not " + protocol
-                    + " (spring.kafka.security.protocol, from the kafka-msk or kafka-strimzi profile)");
+            throw new IllegalStateException("Kafka " + client + " security.protocol must be SASL_SSL or SSL, not "
+                    + protocol + " (spring.kafka.security.protocol, from the kafka-msk or kafka-strimzi profile)"
+                    + HOW_TO_RELAX);
         }
     }
 }

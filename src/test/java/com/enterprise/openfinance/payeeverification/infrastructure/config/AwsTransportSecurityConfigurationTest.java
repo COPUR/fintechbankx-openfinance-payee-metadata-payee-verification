@@ -15,13 +15,11 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Round 5: under the aws profile the service refuses to start unless JDBC verifies
- * Aurora's certificate against the mounted RDS CA bundle and Kafka is SASL_SSL (MSK IAM) or
- * SSL (Strimzi mutual TLS), whatever the Kafka profile (round 6); PLAINTEXT, SASL_PLAINTEXT
- * and an unset protocol are refused. Tests and local runs have no aws profile and still start.
- * Round 8: registered whatever the profiles (the deployment marker is covered in
- * AwsTransportSecurityDeploymentMarkerTest), spring.datasource.hikari.jdbc-url, the effective
- * pool, and Kafka broker host name verification.
+ * Round 5: the service refuses to start unless JDBC verifies Aurora's certificate against
+ * the mounted RDS CA bundle and, when Kafka is in use, Kafka is SASL_SSL (MSK IAM) or SSL (Strimzi
+ * mutual TLS), whatever the Kafka profile (round 6). Round 8: spring.datasource.hikari.jdbc-url and the effective
+ * pool, and Kafka broker host name verification. Guardrail 4a single form: on by default, whatever the profiles
+ * (TlsEnforcementByDefaultTest); these cases run under the chart's profiles.
  */
 class AwsTransportSecurityConfigurationTest {
 
@@ -53,11 +51,12 @@ class AwsTransportSecurityConfigurationTest {
     }
 
     @Test
-    void isRegisteredWithoutTheAwsProfileButDoesNothingWithoutTheDeploymentMarker() {
-        // Round 8: registered whatever the profiles, so a deployment without the aws profile is
-        // still asserted (FBX_DEPLOYED); tests and local runs have neither and start unchanged.
-        runner.withPropertyValues("spring.datasource.url=jdbc:postgresql://localhost:5432/db_of_payee_verification_local",
-                        "spring.kafka.security.protocol=PLAINTEXT")
+    void localRunsAndTestsStartOnlyWithTheSwitchOff() {
+        ApplicationContextRunner local = runner.withPropertyValues(
+                "spring.datasource.url=jdbc:postgresql://localhost:5432/db_of_payee_verification_local",
+                "spring.kafka.security.protocol=PLAINTEXT", "openfinance.outbox.relay.enabled=true");
+        local.run(context -> startupFailure(context).hasMessageContaining("spring.datasource.url must be"));
+        local.withPropertyValues("fintechbankx.tls.enforce=false")
                 .run(context -> assertThat(context).hasNotFailed()
                         .hasBean("awsTransportSecurityAssertion").hasBean("awsHikariPoolTlsAssertion"));
     }
@@ -220,7 +219,8 @@ class AwsTransportSecurityConfigurationTest {
         ApplicationContextRunner shipped = new ApplicationContextRunner()
                 .withInitializer(new ConfigDataApplicationContextInitializer())
                 .withUserConfiguration(AwsTransportSecurityConfiguration.class)
-                .withPropertyValues("spring.profiles.active=aws,kafka-msk");
+                // The test resources switch the assertion off; the shipped default is true.
+                .withPropertyValues("spring.profiles.active=aws,kafka-msk", "fintechbankx.tls.enforce=true");
         shipped.withPropertyValues("DB_URL=" + GOOD)
                 .run(context -> assertThat(context).hasNotFailed());
         shipped.run(context -> startupFailure(context)
