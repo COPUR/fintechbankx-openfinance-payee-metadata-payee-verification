@@ -99,7 +99,7 @@ jobs:
         run: |
           git fetch --no-tags origin "$BASE_REF"
           changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-          if echo "$changed" | grep -q '^src/main/' && ! echo "$changed" | grep -q '^src/test/'; then
+          if grep -q '^src/main/' <<< "$changed" && ! grep -q '^src/test/' <<< "$changed"; then
             if [ "$NO_BEHAVIOUR_CHANGE" = "true" ]; then
               echo "src/main changed without tests; allowed by label no-behaviour-change."
             else

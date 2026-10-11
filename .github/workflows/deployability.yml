@@ -60,13 +60,13 @@ jobs:
           helm template ci "$chart" -f "$chart/values-dev.yaml" $args > /dev/null
           helm template ci "$chart" $args --set kafka.profile=kafka-strimzi > /dev/null
           # NetworkPolicy is opt-in (the mesh repository owns it): none by default ...
-          if helm template ci "$chart" $args | grep -q "kind: NetworkPolicy"; then
+          if helm template ci "$chart" $args | grep "kind: NetworkPolicy" > /dev/null; then
             echo "NetworkPolicy must be off by default"; exit 1
           fi
           # ... and it renders when enabled with the database CIDRs.
           helm lint "$chart" $args --set networkPolicy.enabled=true --set "networkPolicy.databaseCidrs={10.0.0.0/24}"
           helm template ci "$chart" $args --set networkPolicy.enabled=true --set "networkPolicy.databaseCidrs={10.0.0.0/24}" \
-            | grep -q "kind: NetworkPolicy"
+            | grep "kind: NetworkPolicy" > /dev/null
       - name: Chart refuses an enabled NetworkPolicy without database CIDRs
         run: |
           chart=deploy/helm/payee-verification-service
@@ -84,14 +84,14 @@ jobs:
               exit 1
             fi
           done
-          if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES | grep -Eq '^  [A-Z_]+: ""$'; then
+          if helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES | grep -E '^  [A-Z_]+: ""$' > /dev/null; then
             echo "The ConfigMap must not render empty keys"
             exit 1
           fi
       - name: Chart carries no mesh overrides
         run: |
           rendered="$(helm template ci deploy/helm/payee-verification-service --set image.repository=ci/x --set image.tag=x $CI_VALUES)"
-          if echo "$rendered" | grep -Eq 'kind: (PeerAuthentication|DestinationRule)|excludeInboundPorts'; then
+          if grep -Eq 'kind: (PeerAuthentication|DestinationRule)|excludeInboundPorts' <<< "$rendered"; then
             echo "The chart must not weaken the mesh (platform contract)."
             exit 1
           fi
@@ -285,7 +285,8 @@ jobs:
           # '$(' in an env value the templates interpolate (Kubernetes would expand it).
           must_fail "extraEnv.DB_USERNAME must not contain '\$('" --set-string 'migration.username=$(SPRING_DATASOURCE_PASSWORD)'
           must_fail "extraEnv.METRICS_APP_TAG must not contain '\$('" --set-string 'serviceAccount.name=$(DB_URL)'
-          must_fail "extraEnv.METRICS_SQUAD_TAG must not contain '\$('" --set-string 'namespace=$(DB_URL)'
+          # METRICS_SQUAD_TAG is payee.namespace, which refuses anything but an RFC 1123 DNS label first.
+          must_fail 'namespace must be an RFC 1123 DNS label' --set-string 'namespace=$(DB_URL)'
           must_fail "config.DB_URL must not contain" --set-string 'config.DB_URL=jdbc:postgresql://ci:5432/x?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem&ApplicationName=$(X)'
           # Routes the chart does not render are refused rather than ignored.
           must_fail 'envFrom is not supported' --set 'envFrom[0].configMapRef.name=x'
@@ -312,7 +313,6 @@ jobs:
             OIDC_AUDIENCE: "aud\nSPRING_CONFIG_IMPORT: file:/tmp/x.yml"
           # databaseCaBundle.configMapName is pinned to rds-ca-bundle by the guard since 6b6c317: its
           # hostile form is a must_fail case of the next step.
-          namespace: "open-finance\n  annotations: {x: y}"
           serviceAccount:
             name: "payee-verification-service\n  annotations: {x: y}"
             roleArn: "arn:aws:iam::123456789012:role/x\n  x: y"
@@ -338,7 +338,7 @@ jobs:
           helm template ci "$chart" ${base/--set image.tag=x/} -f "$work/np.yaml" -f "$work/hostile.yaml" > "$work/hostile-out.yaml"
           python3 - "$work/baseline.yaml" "$work/hostile-out.yaml" <<'PY'
           import sys, yaml
-          HOSTILE_NAMESPACE = "open-finance\n  annotations: {x: y}"
+          HOSTILE_NAMESPACE = "open-finance"  # a hostile namespace fails the render (next step)
           HOSTILE_SA = "payee-verification-service\n  annotations: {x: y}"
           HOSTILE_ROLE = "arn:aws:iam::123456789012:role/x\n  x: y"
           def load(p):
@@ -393,6 +393,36 @@ jobs:
           PY
           rm -rf "$work" guard.err
           exit $failed
+      - name: Namespace is an RFC 1123 DNS label, and a valid render writes exactly the default documents
+        run: |
+          # Every template writes the namespace through payee.namespace, quoted, and the helper fails the render
+          # unless it is an RFC 1123 DNS label: a "---" separator or a newline cannot close the line and add
+          # documents (a Pod) that the guard never sees.
+          chart=deploy/helm/payee-verification-service
+          args="--set image.repository=ci/x --set image.tag=x $CI_VALUES"
+          work="$(mktemp -d)"
+          ns_fail() {  # <description> <helm args...>
+            local desc="$1"; shift
+            if out="$(helm template ci "$chart" $args "$@" 2>&1)"; then echo "$desc must be refused"; exit 1; fi
+            grep -qF 'namespace must be an RFC 1123 DNS label' <<< "$out" || { echo "$desc failed for another reason: $out"; exit 1; }
+            echo "refused as expected: $desc"
+          }
+          separator=$'open-finance\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: injected\nspec:\n  containers: [{name: x, image: x}]'
+          newline=$'open-finance\n  annotations: {x: y}'
+          printf 'namespace: "open-finance\\n---\\napiVersion: v1\\nkind: Pod\\nmetadata:\\n  name: injected\\nspec:\\n  containers: [{name: x, image: x}]"\n' > "$work/ns-separator.yaml"
+          printf 'namespace: "open-finance\\n  annotations: {x: y}"\n' > "$work/ns-newline.yaml"
+          ns_fail "values namespace with a --- document separator" -f "$work/ns-separator.yaml"
+          ns_fail "values namespace with a newline" -f "$work/ns-newline.yaml"
+          ns_fail "release namespace with a --- document separator" --set namespace= --namespace "$separator"
+          ns_fail "release namespace with a newline" --set namespace= --namespace "$newline"
+          # A valid render writes exactly the documents of the default values (count and kinds), so a line a
+          # later change leaves unquoted cannot add a document the guard never sees.
+          docs() { python3 -c 'import collections, sys, yaml; c = collections.Counter(str(d.get("kind")) if isinstance(d, dict) else "<not a mapping>" for d in yaml.safe_load_all(sys.stdin) if d is not None); print(" ".join(f"{k}={n}" for k, n in sorted(c.items())))'; }
+          want="ConfigMap=1 Deployment=1 ExternalSecret=2 HorizontalPodAutoscaler=1 PodDisruptionBudget=1 Service=1 ServiceAccount=1"
+          got="$(helm template ci "$chart" $args | docs)"
+          [ "$got" = "$want" ] || { echo "rendered documents differ from the default set: got [$got], want [$want]"; exit 1; }
+          echo "the default render writes exactly: $got"
+          rm -rf "$work"
       - name: Platform guard 6b6c317 refuses database CA, Kafka client TLS, Secret-only, DocumentDB and property-reading names
         run: |
           # Platform guard 6b6c317 (README "Vendoring the guard", step 4): the database CA mount pinned
@@ -614,7 +644,7 @@ jobs:
           chart=deploy/helm/payee-verification-service
           for extra in "" "--set namespace=payments-squad" "--namespace from-release --set namespace="; do
             rendered="$(helm template ci "$chart" --set image.repository=ci/x --set image.tag=x $CI_VALUES $extra --show-only templates/deployment.yaml)"
-            ns="$(echo "$rendered" | sed -n 's/^  namespace: *//p' | head -n 1)"
+            ns="$(echo "$rendered" | sed -n 's/^  namespace: *//p' | sed -n 1p | tr -d '"')"  # written quoted
             tag="$(echo "$rendered" | grep -A1 'name: METRICS_SQUAD_TAG' | sed -n 's/^ *value: *//p' | tr -d '"')"
             if [ -z "$ns" ] || [ "$tag" != "$ns" ]; then
               echo "METRICS_SQUAD_TAG ($tag) must equal the Deployment namespace ($ns) [$extra]"; exit 1

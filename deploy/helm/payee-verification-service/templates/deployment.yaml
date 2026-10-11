@@ -64,7 +64,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "payee.name" . }}
-  namespace: {{ include "payee.namespace" . }}
+  namespace: {{ include "payee.namespace" . | quote }}
   labels:
     {{- include "payee.labels" . | nindent 4 }}
 spec:
