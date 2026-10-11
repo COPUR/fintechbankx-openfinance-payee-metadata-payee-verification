@@ -134,7 +134,7 @@ spec:
         # Flyway with the schema owner's credential (secret db-migration); exits when the
         # schema is current. The service container below never holds this credential.
         - name: migrate
-          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}
+          image: {{ include "payee.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           args: ["--spring.main.web-application-type=none"]
           envFrom:
@@ -172,7 +172,7 @@ spec:
               readOnly: true
       containers:
         - name: payee-verification-service
-          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}
+          image: {{ include "payee.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           ports:
             - name: http

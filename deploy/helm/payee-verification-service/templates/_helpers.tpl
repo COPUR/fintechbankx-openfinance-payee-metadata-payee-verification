@@ -238,3 +238,18 @@ container's SPRING_PROFILES_ACTIVE is always aws plus one of the two Kafka profi
 {{- else -}}{{- fail (printf "kafka.profile must be kafka-msk or kafka-strimzi (got %q)" $p) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+The image reference "<image.repository>:<image.tag>". image.tag is the immutable tag the pipeline
+built (the git SHA): it has no default (empty fails as required), and "latest" in any case is refused,
+since a mutable tag lets a restarted pod run another build than the one released. The chart takes no
+digest.
+*/}}
+{{- define "payee.image" -}}
+{{- $repository := required "image.repository is required" .Values.image.repository -}}
+{{- $tag := toString (required "image.tag is required" .Values.image.tag) -}}
+{{- if eq (lower (trim $tag)) "latest" -}}
+{{- fail (printf "image.tag %q is refused: use the immutable tag the pipeline built (the git SHA); a mutable tag lets a restarted pod run another build than the one released" $tag) -}}
+{{- end -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end -}}
