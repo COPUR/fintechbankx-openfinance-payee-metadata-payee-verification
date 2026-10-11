@@ -1,11 +1,15 @@
 {{- /*
-Platform datasource/TLS guard, vendored unchanged as _fbx_helpers.tpl (source, commit, path and sha256 in
-its header; platform chart README, "Vendoring the guard"). The adapter maps every
+Platform datasource/TLS guard, vendored whole and unchanged, without a header, as _fbx_helpers.tpl
+(source repository, path, commit and sha256 are pinned in CI next to
+scripts/ci/verify-vendored-guard.sh; platform chart README, "Vendoring the guard"). The adapter maps every
 value of this chart that feeds one of the guard's routes; a key left out is never checked:
 - config: .Values.config (ConfigMap, envFrom of the migrate init container and the service).
 - extraEnv: .Values.extraEnv (refused whole by payee.refuseConfigOverrides, the chart renders
   none) plus every env value the templates interpolate from values, so the guard refuses '$('
-  in them (Kubernetes expands $(VAR) in env[].value). SPRING_PROFILES_ACTIVE (aws, plus the
+  in them (Kubernetes expands $(VAR) in env[].value), and, with kafka.profile kafka-strimzi, the
+  KAFKA_TLS_CERT, KAFKA_TLS_KEY and KAFKA_TLS_CA entries the service container maps with
+  secretKeyRef from kafka.strimziTlsSecret (the guard accepts them only that way).
+  SPRING_PROFILES_ACTIVE (aws, plus the
   Kafka profile from fbx.kafkaProfile on the service container) is chart-rendered and not
   passed: the guard refuses every spring.profiles.* name it is given. The startup TLS
   assertion needs no chart-rendered switch: it is on by default (fintechbankx.tls.enforce,
@@ -17,8 +21,9 @@ value of this chart that feeds one of the guard's routes; a key left out is neve
   JDK_JAVA_OPTIONS and _JAVA_OPTIONS.
 - externalSecret.data / extraData as values: the chart renders its own entries only; a value
   set there is refused below rather than ignored.
-- databaseCa: databaseCaBundle, always mounted (enabled), so every JDBC URL must carry
-  sslrootcert=<mountPath>/<key>.
+- databaseCa: databaseCaBundle (mountPath, key, configMapName: the values the pod mounts),
+  always mounted (enabled); the guard pins them to /etc/fintechbankx/rds-ca, global-bundle.pem
+  and rds-ca-bundle, and every JDBC URL must carry sslrootcert=<mountPath>/<key>.
 - kafka.runtime: kafka.profile kafka-msk -> msk, kafka-strimzi -> strimzi (payee.kafkaRuntime,
   which refuses any other profile).
 - externalSecret: data = the entries externalsecret.yaml renders (db and db-migration),
@@ -30,6 +35,11 @@ value of this chart that feeds one of the guard's routes; a key left out is neve
       (dict "name" "METRICS_APP_TAG" "value" (toString .Values.serviceAccount.name))
       (dict "name" "METRICS_SQUAD_TAG" "value" (include "payee.namespace" .))
       (dict "name" "DATABASE_CA_BUNDLE" "value" (printf "%s/%s" .Values.databaseCaBundle.mountPath .Values.databaseCaBundle.key)) -}}
+{{- if eq $runtime "strimzi" -}}
+{{- range $name, $key := dict "KAFKA_TLS_CERT" "user.crt" "KAFKA_TLS_KEY" "user.key" "KAFKA_TLS_CA" "ca.crt" -}}
+{{- $env = append $env (dict "name" $name "valueFrom" (dict "secretKeyRef" (dict "name" (toString $.Values.kafka.strimziTlsSecret) "key" $key))) -}}
+{{- end -}}
+{{- end -}}
 {{- $secrets := fromYaml (include "payee.renderedSecretData" (dict "root" . "template" "externalsecret.yaml")) -}}
 {{- if .Values.javaToolOptions -}}
 {{- fail "javaToolOptions is not supported by this chart (it renders no JAVA_TOOL_OPTIONS of its own); set config.JAVA_TOOL_OPTIONS, which the guard checks" -}}
@@ -45,7 +55,8 @@ value of this chart that feeds one of the guard's routes; a key left out is neve
       "envFrom" .Values.envFrom
       "extraEnvFrom" .Values.extraEnvFrom
       "javaToolOptions" ""
-      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCaBundle.mountPath "key" .Values.databaseCaBundle.key)
+      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCaBundle.mountPath "key" .Values.databaseCaBundle.key
+        "configMapName" .Values.databaseCaBundle.configMapName)
       "kafka" (dict "runtime" $runtime)
       "externalSecret" (dict "enabled" true "data" ($secrets.data | default list)
         "dataFrom" (concat ($secrets.dataFrom | default list) (.Values.externalSecret.dataFrom | default list))))) -}}
