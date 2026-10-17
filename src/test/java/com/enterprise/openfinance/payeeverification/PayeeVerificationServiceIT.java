@@ -135,7 +135,7 @@ class PayeeVerificationServiceIT {
     void directoryChangesLandInTheHistoryWithNameDigestsOnly() {
         // One connection, so the session's application_name reaches the trigger.
         JdbcTemplate writable = new JdbcTemplate(new org.springframework.jdbc.datasource.SingleConnectionDataSource(
-            System.getenv("TEST_DB_URL"), env("TEST_DB_USERNAME", "payee_test"), env("TEST_DB_PASSWORD", "payee_test"), true));
+            System.getenv("TEST_DB_URL"), env("TEST_DB_USERNAME", "payee_test"), env("TEST_DB_PASSWORD", ""), true));
         writable.execute("set application_name = 'it-history'");
         writable.update("insert into " + SCHEMA + ".payee_directory_entry (scheme_name, identification, holder_name, account_type,"
             + " account_status, updated_at) values ('IT', 'IT-HISTORY-1', 'History Holder LLC', 'BUSINESS', 'ACTIVE', now())"

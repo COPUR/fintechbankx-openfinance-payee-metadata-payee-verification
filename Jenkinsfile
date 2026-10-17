@@ -46,8 +46,10 @@ pipeline {
                     fi
                     db_name="qg-$(echo "${BUILD_TAG:-local}" | tr -c 'a-zA-Z0-9_.-' '-')"
                     db_secret="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \\n')"
-                    docker run -d --rm --name "$db_name" -e POSTGRES_USER=qg -e POSTGRES_PASSWORD="${db_secret}" \\
+                    export POSTGRES_PASSWORD="${db_secret}"  # docker run -e POSTGRES_PASSWORD reads it from here
+                    docker run -d --rm --name "$db_name" -e POSTGRES_USER=qg -e POSTGRES_PASSWORD \\
                       -e POSTGRES_DB=db_of_payee_verification_test -p 127.0.0.1::5432 postgres:16-alpine >/dev/null
+                    unset POSTGRES_PASSWORD
                     trap 'docker rm -f "$db_name" >/dev/null 2>&1 || true' EXIT
                     for _ in $(seq 1 30); do
                       docker exec "$db_name" pg_isready -U qg -d db_of_payee_verification_test >/dev/null 2>&1 && break
