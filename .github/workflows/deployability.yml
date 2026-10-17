@@ -98,6 +98,11 @@ jobs:
           for bad in "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0" sha256:ABC aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "v1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; do
             must_fail 'is refused: it must be sha256:<64 lowercase hex>' --set-string "image.digest=$bad"
           done
+          # A tag or digest inside image.repository would render repo:tag@digest; a registry port is fine.
+          for bad in ci/x:v1 registry.ci.internal:5000/x:v1 ci/x@sha256:x; do
+            must_fail 'must not carry a tag or digest' --set-string "image.repository=$bad"
+          done
+          helm template ci "$chart" $base --set-string image.repository=registry.ci.internal:5000/x | grep -qF 'image: "registry.ci.internal:5000/x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' || { echo "host:port/repo did not render by digest"; exit 1; }
           # The immutable tag still renders.
           helm template ci "$chart" $base --set image.tag=${{ github.sha }} > /dev/null
           imgs="$(helm template ci "$chart" $base --set image.tag=${{ github.sha }} | grep -E '^ *image: ' | sed -E 's/^ *image: //; s/"//g' | sort -u)"
