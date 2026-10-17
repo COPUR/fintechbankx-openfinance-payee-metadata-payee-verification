@@ -183,7 +183,7 @@ Responses are **not** identical to the monolith's:
 
 There is no route back to the monolith. Roll back to the previous good state:
 
-- **Bad release:** `helm rollback payee-verification-service <previous revision> -n open-finance`.
+- **Bad release:** `HELM_DRIVER=configmap helm rollback payee-verification-service <previous revision> -n open-finance`.
   Migrations are additive, so the previous image runs on the current schema.
 - **Bad directory data:** re-import the previous signed-off export with
   `--full --as-of <its instant>` (`payee_directory_entry_history` shows what the

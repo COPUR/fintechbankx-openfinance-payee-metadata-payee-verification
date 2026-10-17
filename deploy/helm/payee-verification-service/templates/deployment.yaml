@@ -85,7 +85,7 @@ spec:
       labels:
         {{- include "payee.selectorLabels" . | nindent 8 }}
         app: {{ include "payee.name" . }}
-        version: {{ .Values.image.tag | quote }}
+        version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
         fintechbankx.io/service-id: {{ .Values.serviceId | quote }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
