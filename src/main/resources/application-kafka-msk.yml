@@ -1,0 +1,11 @@
+# Amazon MSK with IAM authentication (AWS environments).
+# Credentials come from the pod's IRSA role through the default AWS chain;
+# nothing secret is configured. Selected with SPRING_PROFILES_ACTIVE=kafka-msk.
+spring:
+  kafka:
+    security:
+      protocol: SASL_SSL
+    properties:
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: software.amazon.msk.auth.iam.IAMLoginModule required;
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler

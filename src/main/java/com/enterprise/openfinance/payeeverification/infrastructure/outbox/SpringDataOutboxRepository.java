@@ -1,0 +1,52 @@
+package com.enterprise.openfinance.payeeverification.infrastructure.outbox;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpaEntity, UUID> {
+
+    /**
+     * Takes the cluster-wide relay lock for the current transaction. Only one
+     * replica relays at a time, which keeps each aggregate's events in order.
+     */
+    @Query(value = "select pg_try_advisory_xact_lock(:key)", nativeQuery = true)
+    boolean tryRelayLock(@Param("key") long key);
+
+    @Query(value = """
+        select * from outbox_event
+        where published_at is null and parked_at is null
+        order by created_seq
+        limit :batchSize
+        """, nativeQuery = true)
+    List<OutboxEventJpaEntity> findUnpublishedBatch(@Param("batchSize") int batchSize);
+
+    /** Parked rows not yet counted in outbox_parked_events_total: operator parks done outside the app. */
+    @Query("select e from OutboxEventJpaEntity e where e.parkedAt is not null and e.parkCounted = false")
+    List<OutboxEventJpaEntity> findUncountedParks();
+
+    @Modifying
+    @Query("delete from OutboxEventJpaEntity e where e.publishedAt < :before")
+    int deletePublishedBefore(@Param("before") Instant before);
+
+    long countByPublishedAtIsNull();
+
+    /** Rows the relay still has to send: neither published nor parked. */
+    long countByPublishedAtIsNullAndParkedAtIsNull();
+
+    /** Rows taken out of the relay (payload error or operator), ADR-021 decision 4. */
+    long countByParkedAtIsNotNull();
+
+    /** Age in seconds of the oldest row the relay still has to send; 0 when there is none. */
+    @Query(value = """
+        select coalesce(extract(epoch from (now() - min(created_at))), 0)
+        from outbox_event
+        where published_at is null and parked_at is null
+        """, nativeQuery = true)
+    double oldestPendingAgeSeconds();
+}

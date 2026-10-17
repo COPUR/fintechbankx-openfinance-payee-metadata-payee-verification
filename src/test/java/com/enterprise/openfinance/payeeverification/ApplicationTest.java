@@ -4,14 +4,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.springframework.boot.SpringApplication;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+/** The full context is booted against PostgreSQL in PayeeVerificationServiceIT. */
 class ApplicationTest {
-
-    @Test
-    void contextLoads() {
-    }
 
     @Test
     void mainDelegatesToSpringApplication() {

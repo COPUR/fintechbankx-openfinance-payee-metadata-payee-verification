@@ -1,0 +1,144 @@
+package com.enterprise.openfinance.payeeverification.infrastructure.outbox;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Row of sc_of_payee_verification.outbox_event: one envelope waiting to be
+ * relayed to Kafka. Written in the aggregate's transaction.
+ */
+@Entity
+@Table(name = "outbox_event")
+public class OutboxEventJpaEntity {
+
+    @Id
+    @Column(name = "event_id")
+    private UUID eventId;
+
+    @Column(name = "aggregate_type", nullable = false, length = 64, updatable = false)
+    private String aggregateType;
+
+    @Column(name = "aggregate_id", nullable = false, length = 64, updatable = false)
+    private String aggregateId;
+
+    @Column(name = "aggregate_version", nullable = false, updatable = false)
+    private long aggregateVersion;
+
+    @Column(name = "event_type", nullable = false, length = 128, updatable = false)
+    private String eventType;
+
+    @Column(name = "topic", nullable = false, length = 249, updatable = false)
+    private String topic;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "payload", nullable = false, updatable = false, columnDefinition = "jsonb")
+    private String payload;
+
+    @Column(name = "correlation_id", nullable = false, length = 128, updatable = false)
+    private String correlationId;
+
+    @Column(name = "occurred_at", nullable = false, updatable = false)
+    private Instant occurredAt;
+
+    /** W3C traceparent of the request that recorded the event, if traced. */
+    @Column(name = "traceparent", length = 55, updatable = false)
+    private String traceparent;
+
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
+    @Column(name = "attempts", nullable = false)
+    private int attempts;
+
+    @Column(name = "last_error", length = 512)
+    private String lastError;
+
+    /** Set when the row is taken out of the relay (ADR-021 decision 4); never relayed again. */
+    @Column(name = "parked_at")
+    private Instant parkedAt;
+
+    @Column(name = "parked_reason", length = 512)
+    private String parkedReason;
+
+    /** {@code relay} for a payload error, otherwise the operator's database login. */
+    @Column(name = "parked_by", length = 128)
+    private String parkedBy;
+
+    /** True once this park was counted in outbox_parked_events_total (V8). */
+    @Column(name = "park_counted", nullable = false)
+    private boolean parkCounted;
+
+    protected OutboxEventJpaEntity() {
+    }
+
+    public OutboxEventJpaEntity(UUID eventId, String aggregateType, String aggregateId, long aggregateVersion,
+                                String eventType, String topic, String payload, String correlationId,
+                                Instant occurredAt) {
+        this(eventId, aggregateType, aggregateId, aggregateVersion, eventType, topic, payload, correlationId,
+            occurredAt, null);
+    }
+
+    public OutboxEventJpaEntity(UUID eventId, String aggregateType, String aggregateId, long aggregateVersion,
+                                String eventType, String topic, String payload, String correlationId,
+                                Instant occurredAt, String traceparent) {
+        this.eventId = eventId;
+        this.aggregateType = aggregateType;
+        this.aggregateId = aggregateId;
+        this.aggregateVersion = aggregateVersion;
+        this.eventType = eventType;
+        this.topic = topic;
+        this.payload = payload;
+        this.correlationId = correlationId;
+        this.occurredAt = occurredAt;
+        this.traceparent = traceparent;
+    }
+
+    public UUID getEventId() { return eventId; }
+    public String getAggregateType() { return aggregateType; }
+    public String getAggregateId() { return aggregateId; }
+    public long getAggregateVersion() { return aggregateVersion; }
+    public String getEventType() { return eventType; }
+    public String getTopic() { return topic; }
+    public String getPayload() { return payload; }
+    public String getCorrelationId() { return correlationId; }
+    public Instant getOccurredAt() { return occurredAt; }
+    public String getTraceparent() { return traceparent; }
+    public Instant getPublishedAt() { return publishedAt; }
+    public int getAttempts() { return attempts; }
+    public String getLastError() { return lastError; }
+    public Instant getParkedAt() { return parkedAt; }
+    public String getParkedReason() { return parkedReason; }
+    public String getParkedBy() { return parkedBy; }
+    public boolean isParkCounted() { return parkCounted; }
+
+    void markPublished(Instant at) {
+        this.publishedAt = at;
+        this.attempts++;
+        this.lastError = null;
+    }
+
+    void park(Instant at, String reason, String by) {
+        this.attempts++;
+        this.parkedAt = at;
+        this.parkedReason = truncate(reason, 512);
+        this.parkedBy = truncate(by, 128);
+        this.lastError = this.parkedReason;
+        this.parkCounted = true;
+    }
+
+    /** An operator park (park_outbox_event) has been counted by the relay. */
+    void markParkCounted() {
+        this.parkCounted = true;
+    }
+
+    private static String truncate(String value, int max) {
+        return value == null ? null : value.substring(0, Math.min(value.length(), max));
+    }
+}
