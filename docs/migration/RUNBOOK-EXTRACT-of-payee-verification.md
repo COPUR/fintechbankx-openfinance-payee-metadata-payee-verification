@@ -245,7 +245,7 @@ once the squad has decided the event will not be sent. Run as the ops role
 `payee_verification_ops` (`<env>/payee-verification-service/db-ops`); the
 schema-owner credential is not needed:
 
-    PGPASSWORD=... db/ops/park-outbox-event.sh "host=<writer> dbname=db_of_payee_verification_<env> user=payee_verification_ops sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem" <event-id> "<incident or ticket>: <why>"
+    PGPASSWORD=<password> db/ops/park-outbox-event.sh "host=<writer> dbname=db_of_payee_verification_<env> user=payee_verification_ops sslmode=verify-full sslrootcert=<rds-ca-dir>/global-bundle.pem" <event-id> "<incident or ticket>: <why>"
 
 It calls `park_outbox_event(event_id, reason)` (`V7__outbox_parking.sql`,
 SECURITY DEFINER since V9, so the ops role needs no table rights), which

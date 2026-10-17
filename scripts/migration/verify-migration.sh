@@ -45,13 +45,13 @@ as_role() {
     payee_verification_import) pw="$pw_import" ;;
     payee_verification_ops) pw="$pw_ops" ;;
   esac
-  PGUSER="$role" PGPASSWORD="$pw" PGOPTIONS="-c search_path=$schema" \
+  PGUSER="$role" PGPASSWORD="${pw}" PGOPTIONS="-c search_path=$schema" \
     psql --no-psqlrc -v ON_ERROR_STOP=1 -q -d "$db" "$@"
 }
 # Flyway labels its session payee-verification-flyway (spring.flyway.init-sqls).
 as_flyway() { PGAPPNAME=payee-verification-flyway as_role payee_verification_migrate "$@"; }
 import_as() {
-  PGUSER=payee_verification_import PGPASSWORD="$pw_import" PGDATABASE="$db" \
+  PGUSER=payee_verification_import PGPASSWORD="${pw_import}" PGDATABASE="$db" \
     "$root"/db/import/import-payee-directory.sh "$@"
 }
 
@@ -228,11 +228,11 @@ expect "park_outbox_event runs as its owner with a pinned search_path" "true|pay
 expect "only the ops role (and the owner) may execute park_outbox_event" "payee_verification_ops" \
   "select string_agg(grantee, ',' order by grantee) from information_schema.routine_privileges where routine_schema = '$schema' and routine_name = 'park_outbox_event' and privilege_type = 'EXECUTE' and grantee <> 'payee_verification_migrate'"
 event_id="$(as_role payee_verification_app -At -c "insert into outbox_event (event_id, aggregate_type, aggregate_id, aggregate_version, event_type, topic, payload, correlation_id, occurred_at) values (gen_random_uuid(), 'PayeeVerification', 'x', 0, 'x', 'evt.of.payee.v1', '{}', 'ix-2', now()) returning event_id")"
-if PGUSER=payee_verification_ops PGPASSWORD="$pw_ops" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" " " >/dev/null 2>"$work/park.err"; then
+if PGUSER=payee_verification_ops PGPASSWORD="${pw_ops}" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" " " >/dev/null 2>"$work/park.err"; then
   echo "FAIL operator park accepted a blank reason" >&2; exit 1
 fi
 grep -q "a reason is required" "$work/park.err" && echo "ok   operator park needs a reason"
-PGUSER=payee_verification_ops PGPASSWORD="$pw_ops" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" "REHEARSAL-1 dropped by operator" >/dev/null
+PGUSER=payee_verification_ops PGPASSWORD="${pw_ops}" "$root"/db/ops/park-outbox-event.sh "dbname=$db" "$event_id" "REHEARSAL-1 dropped by operator" >/dev/null
 expect "operator park records the reason and the ops login" "REHEARSAL-1 dropped by operator|payee_verification_ops" \
   "select parked_reason || '|' || parked_by from $schema.outbox_event where event_id = '$event_id'"
 expect "an operator park is left for the relay to count once" "f" \

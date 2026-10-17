@@ -7,7 +7,7 @@
 # directory is refreshed from a core-banking export with this script.
 #
 # Usage: PGHOST=... PGDATABASE=db_of_payee_verification_<env> PGUSER=payee_verification_import \
-#        PGPASSWORD=... db/import/import-payee-directory.sh <export.csv>
+#        PGPASSWORD=<password> db/import/import-payee-directory.sh <export.csv>
 #
 # Runs as the import role payee_verification_import (SELECT/INSERT/UPDATE on
 # payee_directory_entry only; secret <env>/payee-verification-service/db-import).

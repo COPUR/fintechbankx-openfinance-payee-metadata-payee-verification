@@ -45,8 +45,8 @@ pipeline {
                       exit 1
                     fi
                     db_name="qg-$(echo "${BUILD_TAG:-local}" | tr -c 'a-zA-Z0-9_.-' '-')"
-                    db_password="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \\n')"
-                    docker run -d --rm --name "$db_name" -e POSTGRES_USER=qg -e POSTGRES_PASSWORD="$db_password" \\
+                    db_secret="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \\n')"
+                    docker run -d --rm --name "$db_name" -e POSTGRES_USER=qg -e POSTGRES_PASSWORD="${db_secret}" \\
                       -e POSTGRES_DB=db_of_payee_verification_test -p 127.0.0.1::5432 postgres:16-alpine >/dev/null
                     trap 'docker rm -f "$db_name" >/dev/null 2>&1 || true' EXIT
                     for _ in $(seq 1 30); do
@@ -56,7 +56,7 @@ pipeline {
                     docker exec "$db_name" pg_isready -U qg -d db_of_payee_verification_test >/dev/null || { echo "PostgreSQL container did not become ready" >&2; exit 1; }
                     db_port="$(docker port "$db_name" 5432/tcp | head -n 1 | sed 's/.*://')"
                     export TEST_DB_URL="jdbc:postgresql://127.0.0.1:${db_port}/db_of_payee_verification_test"
-                    export TEST_DB_USERNAME=qg TEST_DB_PASSWORD="$db_password"
+                    export TEST_DB_USERNAME=qg TEST_DB_PASSWORD="${db_secret}"
                   fi
                   ./gradlew -p "${SERVICE_DIR}" --no-daemon clean check
                   # AsyncAPI contract gate (ADR-019 section 5), as ci/test runs it.
@@ -109,7 +109,7 @@ pipeline {
                     echo "cosign key not configured; skipping image signing"
                   fi
 
-                  if command -v docker >/dev/null 2>&1 && [ -n "${DOCKER_REGISTRY:-}" ] && [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
+                  if command -v docker >/dev/null 2>&1 && [ -n "${DOCKER_REGISTRY:-}" ] && [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD-}" ]; then
                     echo "${DOCKER_PASSWORD}" | docker login "${DOCKER_REGISTRY}" --username "${DOCKER_USERNAME}" --password-stdin
                     docker push "${IMAGE_NAME}"
                   else

@@ -11,7 +11,7 @@
 # rows; it needs no schema-owner credential.
 #
 # Usage:
-#   PGPASSWORD=... db/ops/park-outbox-event.sh "<conninfo as payee_verification_ops>" <event-id> "<reason>"
+#   PGPASSWORD=<password> db/ops/park-outbox-event.sh "<conninfo as payee_verification_ops>" <event-id> "<reason>"
 # The reason should name the incident or ticket and why the event is dropped.
 # Refuses a blank reason and an unknown, published or already parked event.
 # The park leaves park_counted false; the relay counts it once on its next run
