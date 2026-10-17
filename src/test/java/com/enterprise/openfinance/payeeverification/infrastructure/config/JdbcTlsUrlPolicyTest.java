@@ -72,8 +72,8 @@ class JdbcTlsUrlPolicyTest {
         assertThatThrownBy(() -> JdbcTlsUrlPolicy.requireVerifiedTls("spring.datasource.url", null, BUNDLE))
                 .hasMessageContaining("not a jdbc:postgresql:// URL");
         assertThatThrownBy(() -> JdbcTlsUrlPolicy.requireVerifiedTls("spring.datasource.url",
-                GOOD + "&password=s3cr3t-value&sslmode=disable", BUNDLE))
-                .message().doesNotContain("s3cr3t-value");
+                GOOD + "&password=<fake-db-password>&sslmode=disable", BUNDLE))
+                .message().doesNotContain("<fake-db-password>");
     }
 
     @Test
