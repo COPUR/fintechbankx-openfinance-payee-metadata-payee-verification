@@ -58,10 +58,10 @@ jobs:
       - name: Vendored platform guard (whole-file sha256 pinned, no fbx.* redefinition, called first by every workload template)
         run: |
           # fintechbankx-platform-delivery-iac-cicd-templates
-          # charts/fintechbankx-service/templates/_helpers.tpl at 6b6c3170decb478a3af5c6c80422e0cbea1b1bb0 (6b6c317),
+          # charts/fintechbankx-service/templates/_helpers.tpl at 73e18810d9731c2fe1bb9372bcb02d48624f0e29 (73e1881),
           # vendored whole and unchanged, without a header, as templates/_fbx_helpers.tpl;
           # scripts/ci/verify-vendored-guard.sh copied unchanged from the same repository and commit (needs node 18+).
-          bash scripts/ci/verify-vendored-guard.sh deploy/helm/payee-verification-service 8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba
+          bash scripts/ci/verify-vendored-guard.sh deploy/helm/payee-verification-service 4f2cdfe056f5afce0297f699c8b66cb80dc42e8e311759bf4a973f8a15b28b2d
       - name: Lint and render chart
         run: |
           chart=deploy/helm/payee-verification-service
@@ -680,11 +680,12 @@ jobs:
               echo "METRICS_SQUAD_TAG ($tag) must equal the Deployment namespace ($ns) [$extra]"; exit 1
             fi
           done
-      - name: Every upstream guard case of a4f0072..6b6c317 that applies to this chart's adapter
+      - name: Every upstream guard case of a4f0072..73e1881 that applies to this chart's adapter
         run: |
           # The full upstream set (helm-unittest suites and validate-chart.sh must_fail cases added with the
           # vendored guard), mapped to this chart's routes; scripts/ci/guard-upstream-cases.sh says how.
-          bash scripts/ci/guard-upstream-cases.sh deploy/helm/payee-verification-service --strimzi kafka.profile=kafka-strimzi --database-ca -- \
+          bash scripts/ci/guard-upstream-cases.sh deploy/helm/payee-verification-service --strimzi kafka.profile=kafka-strimzi --database-ca \
+            --stricter 'extraEnv is refused \(|is refused: JVM options must not mention jdbc, ssl, spring, kafka' -- \
             --set image.repository=ci/x --set image.tag=${{ github.sha }} $CI_VALUES
 
   terraform:
